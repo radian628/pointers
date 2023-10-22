@@ -17,7 +17,13 @@ export const stringLiteralRegex = new RegExp(
 export const numberRegex = /[0-9]+(\.[0-9]*)?/;
 export const identRegex = /[a-zA-Z_][a-zA-Z0-9_]*/;
 export const skipRegex = /[ \r\t\n]+/;
-export const opRegex = [
+
+// https://stackoverflow.com/questions/3561493/is-there-a-regexp-escape-function-in-javascript
+function escapeRegex(string) {
+  return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+export const opSymbols = [
   "+",
   "-",
   "*",
@@ -40,8 +46,19 @@ export const opRegex = [
   "->",
   "%",
 ] as const;
+
+export const opRegex = new RegExp(
+  `(${opSymbols.map((s) => escapeRegex(s)).join("|")})(?!=)`
+);
+
+export const opEqualsRegex = new RegExp(
+  `(${opSymbols.map((s) => escapeRegex(s)).join("|")}|)=`
+);
+
+console.log(opRegex);
+
 export const numberTypeRegex = /[fui]/g;
-export type Operator = (typeof opRegex)[number];
+export type Operator = (typeof opSymbols)[number];
 
 export const unaryOpRegex = ["!", "*", "&", "~"] as const;
 export type UnaryOperator = (typeof unaryOpRegex)[number];

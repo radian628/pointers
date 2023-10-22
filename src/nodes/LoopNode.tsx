@@ -5,7 +5,7 @@ import {
   automap,
   handleStatementList,
 } from "../ast";
-import { ParseNode } from "../parser-utils";
+import { ParseNode, TypeErrorFeedback } from "../parser-utils";
 import { ExecutionContext } from "../runtime/runtime";
 
 export class LoopNode extends ParseNode<{
@@ -105,6 +105,30 @@ export class LoopNode extends ParseNode<{
     }
   }
 
-  // TODO: impl this
-  *checkInner(ctx) {}
+  // TODO: add thing for making sure conditions are valid
+  *checkInner(ctx) {
+    const checks: TypeErrorFeedback[] = [];
+
+    if (this.d.conditions.type === "while") {
+      ctx.withBlock(() => {
+        checks.push(...(this.d.conditions.condition?.check(ctx) ?? []));
+        checks.push(...this.d.body.map((b) => b.check(ctx)).flat(1));
+      });
+    } else {
+      // need to create a second block to store "start" statement binding
+      ctx.withBlock(() => {
+        // only exists as a typeguard; this cond should never trigger
+        if (this.d.conditions.type === "while") return;
+
+        checks.push(...(this.d.conditions.start?.check(ctx) ?? []));
+        checks.push(...(this.d.conditions.condition?.check(ctx) ?? []));
+        checks.push(...(this.d.conditions.iter?.check(ctx) ?? []));
+        ctx.withBlock(() => {
+          checks.push(...this.d.body.map((b) => b.check(ctx)).flat(1));
+        });
+      });
+    }
+
+    yield checks;
+  }
 }

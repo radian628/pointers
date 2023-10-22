@@ -1,35 +1,42 @@
 import { allocateStringLiterals, concatArrayBuffers } from "./allocate";
 import { parseStatementList } from "./parser";
 import { ParseInput } from "./parser-utils";
+import { run } from "./runtime/run";
 import {
   DefaultPrimitives,
   DefaultTypes,
   ExecutionContext,
 } from "./runtime/runtime";
+import { TypecheckContext, formatDiagnostic } from "./typecheck";
 
 /*
-The crux of the typechecking problem:
-- I don't want to implement a secondary typechecking system.
-- But I also can't really integrate it within the current system because 
-  doing that wouldn't be exhaustive and would mimic the way a dynamic language
-  handles type/error checking more than a static language. I don't want the
-  errors to depend on which branch of an if-else chain I end up entering.
-- I might want to implement a "type" function for each thing which statically
-  checks its type. I think that to some degree this problem is unsolvable. This
-  is because there's no equivalent for assembly-based languages: All I can do is
-  ensure that my types are correct. The assembly can still be broken.
-
 High priority:
 TODO: Implement arrays
 TODO: Prevent parsing bug with variables starting with "if", "while", etc.
+TODO: 
 
 Med priority:
 TODO: Implement print with format codes (actual printf)
-TODO: Implement a typechecking layer and define proper behavior for bitwise ops and whatnot
+TODO: Implement an "isAssignableTo" function which can be used in several typechecking contexts
+- return types
+- assignments
+- function argument passing
+TODO: Implement an "isCondition" function for implicit casting to booleans
+- used for logical ops
+- loop conditions
+TODO: ++ and -- operators, both prefix and postfix.
 
 Low priority:
 TODO: Test structs and fix the ridiculous amount of inevitable bugs
 TODO: struct members
+*/
+
+/*
+Syntax highlighting and backtracking:
+Currently there's a potential issue with syntax highlighting causing problems
+with backtracking. I think the solution to this is to just discard ranges earlier in the list
+which overlap with ones later in the list.
+
 */
 
 const TEST1 = `
@@ -161,97 +168,34 @@ printstr("\\n");
 
 printstr(test1);
 printstr(test1 + 1);
-printstr((int *)test1 + 1);`;
+printstr((int *)test1 + 1);
+`;
 
-function retrieveNullTerminatedString(mem: ArrayBuffer, i: number) {
-  const uint8array = new Uint8Array(mem);
+const TEST3 = `
+int x;
+for (x = 65; x < 91; x += 1) {
+    putc(x);
+}
+`;
 
-  const dst: number[] = [];
+const output = run(TEST3);
 
-  while (uint8array[i] != 0) {
-    dst.push(uint8array[i++]);
-  }
-
-  return new Uint8Array(dst).buffer;
+if (output.type === "success") {
+  console.log(output);
+} else {
+  console.log(output.errors.map((err) => formatDiagnostic(err)).join("\n"));
 }
 
-const parseInput = new ParseInput(TEST2, 0, 0);
+import { render } from "solid-js/web";
+import { createSignal } from "solid-js";
+import { CodeEditor } from "./ui/CodeEditor";
 
-const tree = parseStatementList(parseInput);
+render(() => {
+  const [code, setCode] = createSignal("");
 
-console.log(tree);
-console.log(tree.debug());
-
-const globalMem = {
-  mem: new ArrayBuffer(0),
-};
-
-allocateStringLiterals(tree, globalMem);
-
-let stdout = "";
-
-const finalState = tree.exec(
-  new ExecutionContext({
-    littleEndian: true,
-    memory: concatArrayBuffers(globalMem.mem, new ArrayBuffer(256)),
-    stack: [
-      {
-        blocks: [
-          {
-            bindings: new Map(),
-          },
-        ],
-        base: globalMem.mem.byteLength,
-        bindings: new Map(),
-        temporaries: [],
-        functionDefinitions: new Map([
-          [
-            "printf",
-            {
-              type: "external",
-              def(ctx, args) {
-                ctx = ctx.clone();
-                ctx = args[0].exec(ctx);
-                const value = ctx.popTempValueAndGetData();
-
-                const text = new TextDecoder().decode(
-                  retrieveNullTerminatedString(ctx.memory, value as number)
-                );
-
-                stdout += text;
-
-                return ctx;
-              },
-            },
-          ],
-          [
-            "putc",
-            {
-              type: "external",
-              def(ctx, args) {
-                ctx = ctx.clone();
-                ctx = args[0].exec(ctx);
-                const value = ctx.popTempValueAndGetData();
-                console.log(value);
-                stdout += String.fromCharCode(Number(value));
-                return ctx;
-              },
-            },
-          ],
-        ]),
-        freed: false,
-        returnType: {
-          definition: DefaultPrimitives.int,
-          pointers: 0,
-        },
-        argc: 0,
-      },
-    ],
-    esp: globalMem.mem.byteLength,
-    types: DefaultTypes,
-  })
-);
-
-console.log(finalState, new Uint8Array(finalState.memory));
-
-console.log("STDOUT\n", stdout);
+  return (
+    <div>
+      <CodeEditor code={code} setCode={setCode}></CodeEditor>
+    </div>
+  );
+}, document.getElementById("main")!);

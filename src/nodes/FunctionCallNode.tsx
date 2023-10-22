@@ -8,6 +8,7 @@ import {
   organizeTypeErrors,
   isStruct,
   typeToString,
+  CTypeError,
 } from "../typecheck";
 
 export class FunctionCallNode
@@ -52,7 +53,7 @@ export class FunctionCallNode
   type(ctx: TypecheckContext): MaybeType {
     const functionTypeSig = ctx.getFunctionTypes(this.d.name, this);
 
-    if (!functionTypeSig.success) return functionTypeSig;
+    if (!functionTypeSig.success) return functionTypeSig as CTypeError;
 
     // correct number of args
     if (functionTypeSig.args.length !== this.d.args.length)
@@ -74,9 +75,19 @@ export class FunctionCallNode
 
     const badargs: string[] = [];
 
+    console.log(
+      "fnname",
+      this.d.name,
+      "argtypes",
+      argTypes,
+      "typesig",
+      functionTypeSig.args
+    );
+
     for (let i = 0; i < functionTypeSig.args.length; i++) {
       // only strictly match if both are structs
-      if (!isStruct(argTypes[i]) && !isStruct(functionTypeSig[i])) continue;
+      if (!isStruct(argTypes[i]) && !isStruct(functionTypeSig.args[i]))
+        continue;
 
       if (argTypes[i].definition !== functionTypeSig[i].definition)
         badargs.push(

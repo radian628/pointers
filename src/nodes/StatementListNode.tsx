@@ -25,6 +25,12 @@ export class StatementListNode extends ParseNode<{
   *checkInner(
     ctx: TypecheckContext
   ): IterableIterator<TypeErrorFeedback | TypeErrorFeedback[] | undefined> {
-    for (const stmt of this.d.body) yield stmt.check(ctx);
+    const checks: TypeErrorFeedback[] = [];
+
+    ctx.withStackFrame(() => {
+      for (const stmt of this.d.body) checks.push(...stmt.check(ctx));
+    });
+
+    yield checks;
   }
 }

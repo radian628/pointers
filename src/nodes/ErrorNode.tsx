@@ -1,5 +1,5 @@
 import { ExecutionError, defaultExprCheck } from "../ast";
-import { ParseNode } from "../parser-utils";
+import { ParseNode, TypeErrorFeedback } from "../parser-utils";
 import { ExecutionContext } from "../runtime/runtime";
 import { IParseExpr, TypecheckContext, MaybeType } from "../typecheck";
 
@@ -22,7 +22,12 @@ export class ErrorNode
     return { success: false, why: [{ node: this, msg: this.d.msg }] };
   }
 
-  *checkInner(ctx) {
-    return defaultExprCheck(this, ctx);
+  *checkInner(ctx: TypecheckContext) {
+    console.log("got here!", defaultExprCheck(this, ctx));
+    yield defaultExprCheck(this, ctx);
+  }
+
+  checkLValue(ctx: TypecheckContext): TypeErrorFeedback[] {
+    return [...defaultExprCheck(this, ctx)];
   }
 }

@@ -1,6 +1,6 @@
 import { ExecutionError, IdentifierNode, TypeAnnotationNode } from "./ast";
 import { Operator, UnaryOperator } from "./lexing";
-import { ParseNode } from "./parser-utils";
+import { ParseNode, TypeErrorFeedback } from "./parser-utils";
 import {
   DefaultPrimitives,
   FloatsBySize,
@@ -10,7 +10,7 @@ import {
 } from "./runtime/runtime";
 
 export class TypecheckContext {
-  knownTypeNames: Map<string, TypeDefinition>;
+  knownTypeNames: Map<string, TypeDefinition> = new Map();
   stack: {
     blocks: { knownVariableTypes: Map<string, Type> }[];
     knownFunctionTypes: Map<
@@ -20,12 +20,10 @@ export class TypecheckContext {
         returns: Type;
       }
     >;
-  }[];
+  }[] = [];
 
-  clone() {
-    const tc2 = new TypecheckContext();
-    tc2.knownTypeNames = new Map(this.knownTypeNames);
-    tc2.stack = this.stack.slice();
+  constructor(knownTypes: Map<string, TypeDefinition>) {
+    this.knownTypeNames = knownTypes;
   }
 
   getTypeFromName(node: TypeAnnotationNode): MaybeType {
@@ -66,7 +64,10 @@ export class TypecheckContext {
     };
   }
 
-  getFunctionTypes(name: string, node: ParseNode<any>) {
+  getFunctionTypes(
+    name: string,
+    node: ParseNode<any>
+  ): { success: true; args: Type[]; returns: Type } | CTypeError {
     const v = this.stack[0].knownFunctionTypes.get(name);
     if (v) return { success: true as true, ...v };
 
@@ -102,12 +103,14 @@ export class TypecheckContext {
   defineVariable(name: string, type: Type) {
     this.blocktop().knownVariableTypes.set(name, type);
   }
-}
 
-export type CTypeError = {
-  success: false;
-  why: { node: ParseNode<any>; msg: string }[];
-};
+  defineFunction(name: string, returnType: Type, argtypes: Type[]) {
+    this.stack[0].knownFunctionTypes.set(name, {
+      returns: returnType,
+      args: argtypes,
+    });
+  }
+}
 
 export function typeErr(node: ParseNode<any>, ...msgs: string[]): CTypeError {
   return {
@@ -116,11 +119,18 @@ export function typeErr(node: ParseNode<any>, ...msgs: string[]): CTypeError {
   };
 }
 
-export function typeSuccess(type: Type): { success: true; type: Type } {
+export function typeSuccess(type: Type): CTypeSuccess {
   return { success: true as true, type };
 }
 
-export type MaybeType = { success: true; type: Type } | CTypeError;
+export type CTypeSuccess = { success: true; type: Type };
+
+export type CTypeError = {
+  success: false;
+  why: { node: ParseNode<any>; msg: string }[];
+};
+
+export type MaybeType = CTypeSuccess | CTypeError;
 
 export interface IParseExpr {
   type(ctx: TypecheckContext): MaybeType;
@@ -141,7 +151,7 @@ export function organizeTypeErrors(
       why: errs
         .map((err) => {
           if (err.success) return [];
-          return err.why;
+          return (err as CTypeError).why;
         })
         .flat(1),
     },
@@ -384,4 +394,19 @@ export function typecheckUnaryOperation(
   if (errs2) return errs2;
 
   return typeSuccess(pointerTo(lvalueType));
+}
+
+const getLineAndCol = (str: string, index: number) => {
+  const line = 1 + (str.slice(0, index).match(/\n/g)?.length ?? 0);
+  const col = str.slice(0, index).match(/(\n|^).*$/)?.[0]?.length ?? 1;
+
+  return { line, col };
+};
+
+export function formatDiagnostic(diag: TypeErrorFeedback) {
+  const { line, col } = getLineAndCol(
+    diag.node.start.text(),
+    diag.node.start.position()
+  );
+  return `${diag.msg}\n    at '${diag.node.text()}' (${line}:${col})`;
 }

@@ -120,13 +120,13 @@ export function handleStatementList(
   };
 }
 
-export function* defaultExprCheck(
+export function defaultExprCheck(
   expr: IParseExpr & ParseNode<any>,
   ctx: TypecheckContext
 ) {
   const type = expr.type(ctx);
-  if (type.success) return [];
-  return { ...type.why };
+  if (type.success === true) return [];
+  return type.why;
 }
 
 export class ExecutionError extends Error {

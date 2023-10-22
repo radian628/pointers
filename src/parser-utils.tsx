@@ -29,7 +29,14 @@ export type Highlight =
   | "type"
   | "string";
 
-export type Matcher = string | readonly string[] | RegExp;
+export type HighlightedRange = {
+  start: number;
+  end: number;
+  highlight: Highlight;
+  lastRange: HighlightedRange | undefined;
+};
+
+export type Matcher = string | readonly (string | RegExp)[] | RegExp;
 
 export interface ParseSource {
   isNext(str: Matcher): string | undefined;
@@ -47,14 +54,17 @@ export interface ParseSource {
   setBindingPower(bp: number): ParseSource;
   mut(): MutableParseSourceWrapper;
   position(): number;
+  text(): string;
+  highlights(): HighlightedRange[];
 }
 
-function matchOnString(matcher: Matcher, str: string) {
+function matchOnString(matcher: Matcher, str: string): string | undefined {
   if (typeof matcher === "string") {
     return str.startsWith(matcher) ? matcher : undefined;
   } else if (Array.isArray(matcher)) {
     for (const matchStr of matcher) {
-      if (str.startsWith(matchStr)) return matchStr;
+      const match = matchOnString(matchStr as string | RegExp, str);
+      if (match) return match;
     }
     return undefined;
   } else if (matcher instanceof RegExp) {
@@ -68,6 +78,23 @@ export class ParseInput implements ParseSource {
   src: string;
   pos: number;
   bp: number;
+  // syntax highlights are stored in a linked list to avoid backtracking problems
+  // while avoiding excess memory use
+  _highlights?: HighlightedRange;
+
+  highlights() {
+    let hl: HighlightedRange | undefined = this._highlights;
+    let highlights: HighlightedRange[] = [];
+    while (hl) {
+      highlights.push(hl);
+      hl = hl.lastRange;
+    }
+    return highlights.reverse();
+  }
+
+  text() {
+    return this.src;
+  }
 
   position() {
     return this.pos;
@@ -77,10 +104,16 @@ export class ParseInput implements ParseSource {
     return this.src.slice(this.pos);
   }
 
-  constructor(src: string, position: number, bindingPower: number) {
+  constructor(
+    src: string,
+    position: number,
+    bindingPower: number,
+    highlights?: HighlightedRange
+  ) {
     this.src = src;
     this.bp = bindingPower;
     this.pos = position;
+    this._highlights = highlights;
   }
 
   isNext(matcher: Matcher) {
@@ -104,9 +137,20 @@ export class ParseInput implements ParseSource {
     );
     if (!strmatch) return [undefined, this];
     const len = strmatch.length + (skipmatch?.length ?? 0);
+    this._highlights = {
+      highlight,
+      start: this.pos,
+      end: this.pos + len,
+      lastRange: this._highlights,
+    };
     return [
       strmatch,
-      new ParseInput(this.src, this.pos + len, this.bindingPower()),
+      new ParseInput(
+        this.src,
+        this.pos + len,
+        this.bindingPower(),
+        this._highlights
+      ),
     ];
   }
 
@@ -135,7 +179,7 @@ export class ParseInput implements ParseSource {
   }
 
   setBindingPower(bp: number): ParseSource {
-    return new ParseInput(this.src, this.pos, bp);
+    return new ParseInput(this.src, this.pos, bp, this._highlights);
   }
 
   mut(): MutableParseSourceWrapper {
@@ -148,6 +192,14 @@ export class MutableParseInput implements MutableParseSourceWrapper {
 
   constructor(src: ParseSource) {
     this.src = src;
+  }
+
+  highlights() {
+    return this.src.highlights();
+  }
+
+  text() {
+    return this.src.text();
   }
 
   position() {
@@ -306,7 +358,11 @@ export abstract class ParseNode<T> {
   checkLValue(ctx: TypecheckContext): TypeErrorFeedback[] {
     const result = this.typeLValue(ctx);
     if (result.success) return [];
-    return result.why;
+    return (result as CTypeError).why;
+  }
+
+  text() {
+    return this.start.text().slice(this.start.position(), this.end.position());
   }
 }
 

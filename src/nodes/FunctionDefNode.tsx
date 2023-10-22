@@ -5,7 +5,8 @@ import {
   handleStatementList,
 } from "../ast";
 import { ParseNode, TypeErrorFeedback } from "../parser-utils";
-import { ExecutionContext, StackFrame } from "../runtime/runtime";
+import { ExecutionContext, StackFrame, Type } from "../runtime/runtime";
+import { TypecheckContext, organizeTypeErrors } from "../typecheck";
 import { DefinitionNode } from "./DefinitionNode";
 
 export class FunctionDefNode extends ParseNode<{
@@ -99,11 +100,41 @@ export class FunctionDefNode extends ParseNode<{
     automap(this.d.body, cb);
   }
 
-  *checkInner(ctx) {
+  *checkInner(ctx: TypecheckContext) {
+    // add function definition (do beforehand to allow recursion)
+
     const checks: TypeErrorFeedback[] = [];
     ctx.withStackFrame(() => {
       // typecheck fnargs
       for (const stmt of this.d.args) checks.push(...stmt.check(ctx));
+
+      const argtypes: Type[] = [];
+
+      // create bindings for fnargs
+      for (const arg of this.d.args) {
+        const mt = ctx.getTypeFromName(arg.d.type);
+
+        const [errs, [t]] = organizeTypeErrors([mt]);
+
+        if (errs) {
+          checks.push(...errs.why);
+          continue;
+        }
+
+        ctx.defineVariable(arg.d.name, t);
+
+        argtypes.push(t);
+      }
+
+      const mrettype = ctx.getTypeFromName(this.d.returnTypeAndName.d.type);
+
+      const [errs, [rettype]] = organizeTypeErrors([mrettype]);
+
+      if (errs) {
+        checks.push(...errs.why);
+      } else {
+        ctx.defineFunction(this.d.returnTypeAndName.d.name, rettype, argtypes);
+      }
     });
     yield checks;
   }

@@ -116,6 +116,7 @@ export class ExecutionContext {
   littleEndian: boolean;
   prev?: ExecutionContext;
   stack: StackFrame[];
+  stdout: string;
 
   constructor(
     opts: {
@@ -124,6 +125,7 @@ export class ExecutionContext {
       stack: StackFrame[];
       esp: number;
       types: DefinedTypes;
+      stdout: string;
     },
     prev?: ExecutionContext
   ) {
@@ -134,6 +136,7 @@ export class ExecutionContext {
     this.prev = prev;
     this.types = opts.types;
     this.esp = opts.esp;
+    this.stdout = opts.stdout;
   }
 
   getvar(name: string) {
@@ -150,6 +153,7 @@ export class ExecutionContext {
         stack: this.stack,
         esp: this.esp,
         types: this.types,
+        stdout: this.stdout,
       },
       this
     );
@@ -244,7 +248,6 @@ export class ExecutionContext {
 
     assert(getterFn, "getterFn exists");
 
-    // @ts-expect-error no thank you
     return getterFn.apply(this.view, [instance.offset, this.littleEndian]);
   }
 

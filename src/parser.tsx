@@ -28,6 +28,7 @@ import {
   identRegex,
   numberRegex,
   numberTypeRegex,
+  opEqualsRegex,
   opRegex,
   stringLiteralRegex,
   unaryOpRegex,
@@ -319,6 +320,12 @@ export function parseStatement(s: ParseSource): ParseStatement {
 
   const def = muts.parse(parseDefinition, 0);
 
+  if (def instanceof DefinitionNode && muts.isNext(";")) {
+    return new VariableDefinitionNode(s, muts.current(), {
+      definition: def,
+    });
+  }
+
   // doesnt start with type declaration -> probably an assignment
   if (def instanceof ErrorNode) {
     muts = s.mut();
@@ -342,13 +349,19 @@ export function parseStatement(s: ParseSource): ParseStatement {
     const assignment = (() => {
       muts = s.mut();
 
-      const left = muts.parse(parseExpr, 200);
+      const left = muts.parse(parseExpr, 0);
 
       if (left instanceof ErrorNode) return;
 
-      const op = muts.expect(opRegex, "operator") as Operator | undefined;
+      const opEquals = muts.expect(opEqualsRegex, "operator") as
+        | `${Operator | ""}=`
+        | undefined;
 
-      if (!muts.expect("=", "operator")) return;
+      if (!opEquals) return;
+
+      const op = (opEquals === "=" ? undefined : opEquals.slice(0, 1)) as
+        | Operator
+        | undefined;
 
       const right = muts.parse(parseExpr, 0);
 
@@ -548,6 +561,7 @@ function parseInitExpr(s: ParseSource): ParseExpr {
 
           const typecast = muts.parse(parseTypeAnnotation, 0);
 
+          // typecast
           if (typecast instanceof TypeAnnotationNode) {
             const typecastNode = (() => {
               if (!muts.expect(")", "bracket")) return;
@@ -560,8 +574,6 @@ function parseInitExpr(s: ParseSource): ParseExpr {
                 value,
               });
             })();
-
-            console.log("TYPECAST", typecastNode);
 
             if (typecastNode) return typecastNode;
           }
@@ -637,8 +649,8 @@ function parseInitExpr(s: ParseSource): ParseExpr {
 }
 
 function parseConsequentExpr(left: ParseExpr) {
-  console.log("LEFT", left);
   const muts = left.end.mut();
+  console.log(left.text());
   return muts.match<ParseExpr>(
     [
       // binary op
@@ -646,6 +658,8 @@ function parseConsequentExpr(left: ParseExpr) {
         opRegex,
         "operator",
         (op) => {
+          console.log("found op", op);
+
           const bp = getBindingPowerOfNextToken(left.end);
 
           const right = muts.parse(parseExpr, bp);

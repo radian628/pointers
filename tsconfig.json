@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "jsxImportSource": "solid-js",
+    "jsx": "preserve",
+    "lib": ["es2020", "DOM"],
+    "target": "ES2015",
+    "moduleResolution": "Bundler"
+  }
+}
