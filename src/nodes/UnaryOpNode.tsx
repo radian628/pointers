@@ -76,7 +76,7 @@ export class UnaryOpNode
   }
 
   *checkInner(ctx) {
-    return defaultExprCheck(this, ctx);
+    yield defaultExprCheck(this, ctx);
   }
 
   typeLValue(ctx: TypecheckContext): MaybeType {

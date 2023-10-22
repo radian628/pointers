@@ -187,6 +187,6 @@ export class BinaryOpNode
   }
 
   *checkInner(ctx) {
-    return defaultExprCheck(this, ctx);
+    yield defaultExprCheck(this, ctx);
   }
 }

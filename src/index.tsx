@@ -189,13 +189,8 @@ if (output.type === "success") {
 import { render } from "solid-js/web";
 import { createSignal } from "solid-js";
 import { CodeEditor } from "./ui/CodeEditor";
+import { Page } from "./ui/Page";
 
 render(() => {
-  const [code, setCode] = createSignal("");
-
-  return (
-    <div>
-      <CodeEditor code={code} setCode={setCode}></CodeEditor>
-    </div>
-  );
+  return <Page></Page>;
 }, document.getElementById("main")!);

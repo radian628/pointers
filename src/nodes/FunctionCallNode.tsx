@@ -53,7 +53,7 @@ export class FunctionCallNode
   type(ctx: TypecheckContext): MaybeType {
     const functionTypeSig = ctx.getFunctionTypes(this.d.name, this);
 
-    if (!functionTypeSig.success) return functionTypeSig as CTypeError;
+    if (functionTypeSig.success === false) return functionTypeSig;
 
     // correct number of args
     if (functionTypeSig.args.length !== this.d.args.length)
@@ -101,6 +101,6 @@ export class FunctionCallNode
   }
 
   *checkInner(ctx) {
-    return defaultExprCheck(this, ctx);
+    yield defaultExprCheck(this, ctx);
   }
 }

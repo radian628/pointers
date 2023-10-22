@@ -20,6 +20,7 @@ import {
   UnaryOpNode,
   StringLiteralNode,
   TypecastNode,
+  ExecutionError,
 } from "./ast";
 import {
   Operator,
@@ -41,6 +42,7 @@ import {
   ParseSource,
   UnaryBindingPowers,
   requiresSemicolon,
+  seek,
 } from "./parser-utils";
 
 function getBindingPowerOfNextToken(s: ParseSource): number {
@@ -106,7 +108,7 @@ export function parseDefinition(s: ParseSource) {
 
   if (type instanceof ErrorNode) return type;
 
-  const name = muts.expect(identRegex, "type");
+  const name = muts.expect(identRegex, "identifier");
 
   if (!name) return muts.err(s, "Expected an identifier.");
 
@@ -621,14 +623,15 @@ function parseInitExpr(s: ParseSource): ParseExpr {
                   // argument list
                   while (!muts.isNext(")")) {
                     const arg = muts.parse<ParseExpr>(parseExpr, 0);
-                    if (arg instanceof ErrorNode) return arg;
                     args.push(arg);
                     if (!muts.expect(",", "comma")) break;
                   }
 
                   // closing brace
-                  if (!muts.expect(")", "bracket"))
-                    return muts.err(s, "Expected a ')'.");
+                  if (!muts.expect(")", "bracket")) {
+                    seek(s, muts, ")", "bracket", "Expected a ')'");
+                    args.push(muts.err(s, "Malformed function argument(s)."));
+                  }
 
                   return new FunctionCallNode(s, muts.current(), {
                     args,

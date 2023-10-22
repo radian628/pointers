@@ -1,0 +1,34 @@
+/* src/ui/Page.less */
+:root {
+  --border: #bbbbbb;
+  font-family: sans-serif;
+}
+body {
+  padding: 0;
+  margin: 0;
+}
+.page {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+}
+.page .code-editor {
+  min-width: 300px;
+  border-right: 1px solid var(--border);
+  max-height: 99vh;
+  overflow: auto;
+}
+.page .code-output-panel {
+  margin: 10px;
+  padding-right: 10px;
+  border-right: 1px solid var(--border);
+}
+.page .code-output-panel .run-feedback {
+  margin-left: 10px;
+}
+.page .code-output-panel .code-output {
+  font-family: monospace;
+}
+/*# sourceMappingURL=index.css.map */

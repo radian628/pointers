@@ -9,6 +9,8 @@ import {
   TypeDefinition,
 } from "./runtime/runtime";
 
+export type FunctionTypes = Map<string, { args: Type[]; returns: Type }>;
+
 export class TypecheckContext {
   knownTypeNames: Map<string, TypeDefinition> = new Map();
   stack: {
@@ -22,8 +24,14 @@ export class TypecheckContext {
     >;
   }[] = [];
 
-  constructor(knownTypes: Map<string, TypeDefinition>) {
+  initFunctionTypes: FunctionTypes;
+
+  constructor(
+    knownTypes: Map<string, TypeDefinition>,
+    initFunctionTypes: FunctionTypes
+  ) {
     this.knownTypeNames = knownTypes;
+    this.initFunctionTypes = initFunctionTypes;
   }
 
   getTypeFromName(node: TypeAnnotationNode): MaybeType {
@@ -94,7 +102,8 @@ export class TypecheckContext {
   withStackFrame(cb: () => void) {
     this.stack.push({
       blocks: [{ knownVariableTypes: new Map() }],
-      knownFunctionTypes: new Map(),
+      knownFunctionTypes:
+        this.stack.length == 0 ? this.initFunctionTypes : new Map(),
     });
     cb();
     this.stack.pop();

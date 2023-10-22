@@ -45,6 +45,6 @@ export class TypecastNode
     | { node: ParseNode<any>; msg: string }
     | { node: ParseNode<any>; msg: string }[]
   > {
-    return defaultExprCheck(this, ctx);
+    yield defaultExprCheck(this, ctx);
   }
 }

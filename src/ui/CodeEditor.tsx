@@ -9,9 +9,7 @@ import {
   keymap,
   Decoration,
   ViewPlugin,
-  DecorationSet,
-  ViewUpdate,
-  PluginValue,
+  lineNumbers,
 } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
 import {
@@ -58,7 +56,6 @@ function pointerSyntaxHighlighterPlugin() {
     },
     {
       decorations(update) {
-        console.log("DECORATIONS", decorations);
         return decorations;
       },
     }
@@ -88,9 +85,10 @@ export function CodeEditor(props: {
 }) {
   return (
     <div
-      class="repl-input"
+      class="code-editor"
       ref={(el) => {
         const extensions: () => Extension = () => [
+          lineNumbers(),
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           keymap.of(defaultKeymap),
           EditorView.updateListener.of((v) => {

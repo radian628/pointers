@@ -61,6 +61,6 @@ export class NumberNode
   }
 
   *checkInner(ctx) {
-    return defaultExprCheck(this, ctx);
+    yield defaultExprCheck(this, ctx);
   }
 }

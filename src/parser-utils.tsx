@@ -56,6 +56,7 @@ export interface ParseSource {
   position(): number;
   text(): string;
   highlights(): HighlightedRange[];
+  end(): boolean;
 }
 
 function matchOnString(matcher: Matcher, str: string): string | undefined {
@@ -81,6 +82,10 @@ export class ParseInput implements ParseSource {
   // syntax highlights are stored in a linked list to avoid backtracking problems
   // while avoiding excess memory use
   _highlights?: HighlightedRange;
+
+  end() {
+    return this.pos >= this.src.length;
+  }
 
   highlights() {
     let hl: HighlightedRange | undefined = this._highlights;
@@ -192,6 +197,10 @@ export class MutableParseInput implements MutableParseSourceWrapper {
 
   constructor(src: ParseSource) {
     this.src = src;
+  }
+
+  end() {
+    return this.src.end();
   }
 
   highlights() {
@@ -428,3 +437,22 @@ export const UnaryBindingPowers: { [key in UnaryOperator]: number } = {
   "~": 150,
   "!": 150,
 };
+
+export function seek(
+  start: ParseSource,
+  muts: MutableParseSourceWrapper,
+  matcher: Matcher,
+  highlight: Highlight,
+  err: string
+) {
+  let i = 0;
+  while (!muts.end() && !muts.isNext(matcher)) {
+    muts.expect(/[\s\S]/, "operator");
+    i++;
+    if (i > 10000) {
+      console.log("ASDASD", i, muts);
+      break;
+    }
+  }
+  if (!muts.expect(matcher, highlight)) return muts.err(start, err);
+}

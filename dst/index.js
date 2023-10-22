@@ -757,6 +757,7 @@
       }
     }
   }
+  var $$EVENTS = "_$DX_DELEGATE";
   function render(code, element, init, options = {}) {
     let disposer;
     createRoot((dispose) => {
@@ -779,6 +780,16 @@
     fn.cloneNode = fn;
     return fn;
   }
+  function delegateEvents(eventNames, document2 = window.document) {
+    const e = document2[$$EVENTS] || (document2[$$EVENTS] = /* @__PURE__ */ new Set());
+    for (let i = 0, l = eventNames.length; i < l; i++) {
+      const name2 = eventNames[i];
+      if (!e.has(name2)) {
+        e.add(name2);
+        document2.addEventListener(name2, eventHandler);
+      }
+    }
+  }
   function use(fn, element, arg) {
     return untrack(() => fn(element, arg));
   }
@@ -788,6 +799,34 @@
     if (typeof accessor !== "function")
       return insertExpression(parent, accessor, initial, marker);
     createRenderEffect((current) => insertExpression(parent, accessor(), current, marker), initial);
+  }
+  function eventHandler(e) {
+    const key = `$$${e.type}`;
+    let node = e.composedPath && e.composedPath()[0] || e.target;
+    if (e.target !== node) {
+      Object.defineProperty(e, "target", {
+        configurable: true,
+        value: node
+      });
+    }
+    Object.defineProperty(e, "currentTarget", {
+      configurable: true,
+      get() {
+        return node || document;
+      }
+    });
+    if (sharedConfig.registry && !sharedConfig.done)
+      sharedConfig.done = _$HY.done = true;
+    while (node) {
+      const handler = node[key];
+      if (handler && !node.disabled) {
+        const data = node[`${key}Data`];
+        data !== void 0 ? handler.call(node, data, e) : handler.call(node, e);
+        if (e.cancelBubble)
+          return;
+      }
+      node = node._$host || node.parentNode || node.host;
+    }
   }
   function insertExpression(parent, value, current, marker, unwrapArray) {
     if (sharedConfig.context) {
@@ -1258,8 +1297,9 @@
   var TypecheckContext = class {
     knownTypeNames = /* @__PURE__ */ new Map();
     stack = [];
-    constructor(knownTypes) {
+    constructor(knownTypes, initFunctionTypes) {
       this.knownTypeNames = knownTypes;
+      this.initFunctionTypes = initFunctionTypes;
     }
     getTypeFromName(node) {
       const type = this.knownTypeNames.get(node.d.name);
@@ -1337,7 +1377,7 @@
         blocks: [{
           knownVariableTypes: /* @__PURE__ */ new Map()
         }],
-        knownFunctionTypes: /* @__PURE__ */ new Map()
+        knownFunctionTypes: this.stack.length == 0 ? this.initFunctionTypes : /* @__PURE__ */ new Map()
       });
       cb();
       this.stack.pop();
@@ -1555,6 +1595,9 @@
   var ParseInput = class _ParseInput {
     // syntax highlights are stored in a linked list to avoid backtracking problems
     // while avoiding excess memory use
+    end() {
+      return this.pos >= this.src.length;
+    }
     highlights() {
       let hl = this._highlights;
       let highlights = [];
@@ -1627,6 +1670,9 @@
   var MutableParseInput = class {
     constructor(src) {
       this.src = src;
+    }
+    end() {
+      return this.src.end();
     }
     highlights() {
       return this.src.highlights();
@@ -1753,6 +1799,19 @@
     "~": 150,
     "!": 150
   };
+  function seek(start, muts, matcher, highlight, err) {
+    let i = 0;
+    while (!muts.end() && !muts.isNext(matcher)) {
+      muts.expect(/[\s\S]/, "operator");
+      i++;
+      if (i > 1e4) {
+        console.log("ASDASD", i, muts);
+        break;
+      }
+    }
+    if (!muts.expect(matcher, highlight))
+      return muts.err(start, err);
+  }
 
   // src/nodes/BinaryOpNode.tsx
   function handleBinaryOperation(ctx, op) {
@@ -1867,7 +1926,7 @@
       return typecheckBinaryOperation(ctx, this.d.op, this.d.left, this.d.right, this);
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
   };
 
@@ -1962,7 +2021,7 @@
     }
     type(ctx) {
       const functionTypeSig = ctx.getFunctionTypes(this.d.name, this);
-      if (!functionTypeSig.success)
+      if (functionTypeSig.success === false)
         return functionTypeSig;
       if (functionTypeSig.args.length !== this.d.args.length)
         return {
@@ -1990,7 +2049,7 @@
       };
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
   };
 
@@ -2112,7 +2171,7 @@
       return ctx.getVariableType(this);
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
     typeLValue(ctx) {
       return ctx.getVariableType(this);
@@ -2278,7 +2337,7 @@
       };
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
   };
 
@@ -2354,7 +2413,7 @@
       return typeSuccess(this._type());
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
   };
 
@@ -2408,7 +2467,7 @@
       return type;
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
   };
 
@@ -2460,7 +2519,7 @@
       return typecheckUnaryOperation(ctx, this.d.op, this.d.value, this);
     }
     *checkInner(ctx) {
-      return defaultExprCheck(this, ctx);
+      yield defaultExprCheck(this, ctx);
     }
     typeLValue(ctx) {
       if (this.d.op !== "*") {
@@ -2676,7 +2735,7 @@
     const type = muts.parse(parseTypeAnnotation, 0);
     if (type instanceof ErrorNode)
       return type;
-    const name2 = muts.expect(identRegex, "type");
+    const name2 = muts.expect(identRegex, "identifier");
     if (!name2)
       return muts.err(s, "Expected an identifier.");
     return new DefinitionNode(s, muts.current(), {
@@ -3022,14 +3081,14 @@
               let args = [];
               while (!muts.isNext(")")) {
                 const arg = muts.parse(parseExpr, 0);
-                if (arg instanceof ErrorNode)
-                  return arg;
                 args.push(arg);
                 if (!muts.expect(",", "comma"))
                   break;
               }
-              if (!muts.expect(")", "bracket"))
-                return muts.err(s, "Expected a ')'.");
+              if (!muts.expect(")", "bracket")) {
+                seek(s, muts, ")", "bracket", "Expected a ')'");
+                args.push(muts.err(s, "Malformed function argument(s)."));
+              }
               return new FunctionCallNode(s, muts.current(), {
                 args,
                 name: ident
@@ -3071,10 +3130,20 @@
     }
     return new Uint8Array(dst).buffer;
   }
+  var defaultFunctions = /* @__PURE__ */ new Map([["putc", {
+    args: [{
+      definition: DefaultPrimitives.int,
+      pointers: 0
+    }],
+    returns: {
+      definition: DefaultPrimitives.int,
+      pointers: 0
+    }
+  }]]);
   function parse(code) {
     const parseInput = new ParseInput(code, 0, 0);
     const tree = parseStatementList(parseInput);
-    const errors = tree.check(new TypecheckContext(DefaultTypes));
+    const errors = tree.check(new TypecheckContext(DefaultTypes, defaultFunctions));
     return {
       tree,
       errors,
@@ -3084,7 +3153,7 @@
   function run(code) {
     const parseInput = new ParseInput(code, 0, 0);
     const tree = parseStatementList(parseInput);
-    const errors = tree.check(new TypecheckContext(DefaultTypes));
+    const errors = tree.check(new TypecheckContext(DefaultTypes, defaultFunctions));
     if (errors.length > 0)
       return {
         type: "error",
@@ -14791,6 +14860,370 @@
   GutterMarker.prototype.mapMode = MapMode.TrackBefore;
   GutterMarker.prototype.startSide = GutterMarker.prototype.endSide = -1;
   GutterMarker.prototype.point = true;
+  var gutterLineClass = /* @__PURE__ */ Facet.define();
+  var activeGutters = /* @__PURE__ */ Facet.define();
+  var unfixGutters = /* @__PURE__ */ Facet.define({
+    combine: (values) => values.some((x) => x)
+  });
+  function gutters(config) {
+    let result = [
+      gutterView
+    ];
+    if (config && config.fixed === false)
+      result.push(unfixGutters.of(true));
+    return result;
+  }
+  var gutterView = /* @__PURE__ */ ViewPlugin.fromClass(class {
+    constructor(view) {
+      this.view = view;
+      this.prevViewport = view.viewport;
+      this.dom = document.createElement("div");
+      this.dom.className = "cm-gutters";
+      this.dom.setAttribute("aria-hidden", "true");
+      this.dom.style.minHeight = this.view.contentHeight / this.view.scaleY + "px";
+      this.gutters = view.state.facet(activeGutters).map((conf) => new SingleGutterView(view, conf));
+      for (let gutter2 of this.gutters)
+        this.dom.appendChild(gutter2.dom);
+      this.fixed = !view.state.facet(unfixGutters);
+      if (this.fixed) {
+        this.dom.style.position = "sticky";
+      }
+      this.syncGutters(false);
+      view.scrollDOM.insertBefore(this.dom, view.contentDOM);
+    }
+    update(update) {
+      if (this.updateGutters(update)) {
+        let vpA = this.prevViewport, vpB = update.view.viewport;
+        let vpOverlap = Math.min(vpA.to, vpB.to) - Math.max(vpA.from, vpB.from);
+        this.syncGutters(vpOverlap < (vpB.to - vpB.from) * 0.8);
+      }
+      if (update.geometryChanged)
+        this.dom.style.minHeight = this.view.contentHeight + "px";
+      if (this.view.state.facet(unfixGutters) != !this.fixed) {
+        this.fixed = !this.fixed;
+        this.dom.style.position = this.fixed ? "sticky" : "";
+      }
+      this.prevViewport = update.view.viewport;
+    }
+    syncGutters(detach) {
+      let after = this.dom.nextSibling;
+      if (detach)
+        this.dom.remove();
+      let lineClasses = RangeSet.iter(this.view.state.facet(gutterLineClass), this.view.viewport.from);
+      let classSet = [];
+      let contexts = this.gutters.map((gutter2) => new UpdateContext(gutter2, this.view.viewport, -this.view.documentPadding.top));
+      for (let line of this.view.viewportLineBlocks) {
+        if (classSet.length)
+          classSet = [];
+        if (Array.isArray(line.type)) {
+          let first = true;
+          for (let b of line.type) {
+            if (b.type == BlockType.Text && first) {
+              advanceCursor(lineClasses, classSet, b.from);
+              for (let cx of contexts)
+                cx.line(this.view, b, classSet);
+              first = false;
+            } else if (b.widget) {
+              for (let cx of contexts)
+                cx.widget(this.view, b);
+            }
+          }
+        } else if (line.type == BlockType.Text) {
+          advanceCursor(lineClasses, classSet, line.from);
+          for (let cx of contexts)
+            cx.line(this.view, line, classSet);
+        } else if (line.widget) {
+          for (let cx of contexts)
+            cx.widget(this.view, line);
+        }
+      }
+      for (let cx of contexts)
+        cx.finish();
+      if (detach)
+        this.view.scrollDOM.insertBefore(this.dom, after);
+    }
+    updateGutters(update) {
+      let prev = update.startState.facet(activeGutters), cur = update.state.facet(activeGutters);
+      let change = update.docChanged || update.heightChanged || update.viewportChanged || !RangeSet.eq(update.startState.facet(gutterLineClass), update.state.facet(gutterLineClass), update.view.viewport.from, update.view.viewport.to);
+      if (prev == cur) {
+        for (let gutter2 of this.gutters)
+          if (gutter2.update(update))
+            change = true;
+      } else {
+        change = true;
+        let gutters2 = [];
+        for (let conf of cur) {
+          let known = prev.indexOf(conf);
+          if (known < 0) {
+            gutters2.push(new SingleGutterView(this.view, conf));
+          } else {
+            this.gutters[known].update(update);
+            gutters2.push(this.gutters[known]);
+          }
+        }
+        for (let g of this.gutters) {
+          g.dom.remove();
+          if (gutters2.indexOf(g) < 0)
+            g.destroy();
+        }
+        for (let g of gutters2)
+          this.dom.appendChild(g.dom);
+        this.gutters = gutters2;
+      }
+      return change;
+    }
+    destroy() {
+      for (let view of this.gutters)
+        view.destroy();
+      this.dom.remove();
+    }
+  }, {
+    provide: (plugin) => EditorView.scrollMargins.of((view) => {
+      let value = view.plugin(plugin);
+      if (!value || value.gutters.length == 0 || !value.fixed)
+        return null;
+      return view.textDirection == Direction.LTR ? { left: value.dom.offsetWidth * view.scaleX } : { right: value.dom.offsetWidth * view.scaleX };
+    })
+  });
+  function asArray2(val) {
+    return Array.isArray(val) ? val : [val];
+  }
+  function advanceCursor(cursor, collect, pos) {
+    while (cursor.value && cursor.from <= pos) {
+      if (cursor.from == pos)
+        collect.push(cursor.value);
+      cursor.next();
+    }
+  }
+  var UpdateContext = class {
+    constructor(gutter2, viewport, height) {
+      this.gutter = gutter2;
+      this.height = height;
+      this.i = 0;
+      this.cursor = RangeSet.iter(gutter2.markers, viewport.from);
+    }
+    addElement(view, block, markers) {
+      let { gutter: gutter2 } = this, above = (block.top - this.height) / view.scaleY, height = block.height / view.scaleY;
+      if (this.i == gutter2.elements.length) {
+        let newElt = new GutterElement(view, height, above, markers);
+        gutter2.elements.push(newElt);
+        gutter2.dom.appendChild(newElt.dom);
+      } else {
+        gutter2.elements[this.i].update(view, height, above, markers);
+      }
+      this.height = block.bottom;
+      this.i++;
+    }
+    line(view, line, extraMarkers) {
+      let localMarkers = [];
+      advanceCursor(this.cursor, localMarkers, line.from);
+      if (extraMarkers.length)
+        localMarkers = localMarkers.concat(extraMarkers);
+      let forLine = this.gutter.config.lineMarker(view, line, localMarkers);
+      if (forLine)
+        localMarkers.unshift(forLine);
+      let gutter2 = this.gutter;
+      if (localMarkers.length == 0 && !gutter2.config.renderEmptyElements)
+        return;
+      this.addElement(view, line, localMarkers);
+    }
+    widget(view, block) {
+      let marker = this.gutter.config.widgetMarker(view, block.widget, block);
+      if (marker)
+        this.addElement(view, block, [marker]);
+    }
+    finish() {
+      let gutter2 = this.gutter;
+      while (gutter2.elements.length > this.i) {
+        let last = gutter2.elements.pop();
+        gutter2.dom.removeChild(last.dom);
+        last.destroy();
+      }
+    }
+  };
+  var SingleGutterView = class {
+    constructor(view, config) {
+      this.view = view;
+      this.config = config;
+      this.elements = [];
+      this.spacer = null;
+      this.dom = document.createElement("div");
+      this.dom.className = "cm-gutter" + (this.config.class ? " " + this.config.class : "");
+      for (let prop in config.domEventHandlers) {
+        this.dom.addEventListener(prop, (event) => {
+          let target = event.target, y;
+          if (target != this.dom && this.dom.contains(target)) {
+            while (target.parentNode != this.dom)
+              target = target.parentNode;
+            let rect = target.getBoundingClientRect();
+            y = (rect.top + rect.bottom) / 2;
+          } else {
+            y = event.clientY;
+          }
+          let line = view.lineBlockAtHeight(y - view.documentTop);
+          if (config.domEventHandlers[prop](view, line, event))
+            event.preventDefault();
+        });
+      }
+      this.markers = asArray2(config.markers(view));
+      if (config.initialSpacer) {
+        this.spacer = new GutterElement(view, 0, 0, [config.initialSpacer(view)]);
+        this.dom.appendChild(this.spacer.dom);
+        this.spacer.dom.style.cssText += "visibility: hidden; pointer-events: none";
+      }
+    }
+    update(update) {
+      let prevMarkers = this.markers;
+      this.markers = asArray2(this.config.markers(update.view));
+      if (this.spacer && this.config.updateSpacer) {
+        let updated = this.config.updateSpacer(this.spacer.markers[0], update);
+        if (updated != this.spacer.markers[0])
+          this.spacer.update(update.view, 0, 0, [updated]);
+      }
+      let vp = update.view.viewport;
+      return !RangeSet.eq(this.markers, prevMarkers, vp.from, vp.to) || (this.config.lineMarkerChange ? this.config.lineMarkerChange(update) : false);
+    }
+    destroy() {
+      for (let elt of this.elements)
+        elt.destroy();
+    }
+  };
+  var GutterElement = class {
+    constructor(view, height, above, markers) {
+      this.height = -1;
+      this.above = 0;
+      this.markers = [];
+      this.dom = document.createElement("div");
+      this.dom.className = "cm-gutterElement";
+      this.update(view, height, above, markers);
+    }
+    update(view, height, above, markers) {
+      if (this.height != height) {
+        this.height = height;
+        this.dom.style.height = height + "px";
+      }
+      if (this.above != above)
+        this.dom.style.marginTop = (this.above = above) ? above + "px" : "";
+      if (!sameMarkers(this.markers, markers))
+        this.setMarkers(view, markers);
+    }
+    setMarkers(view, markers) {
+      let cls = "cm-gutterElement", domPos = this.dom.firstChild;
+      for (let iNew = 0, iOld = 0; ; ) {
+        let skipTo = iOld, marker = iNew < markers.length ? markers[iNew++] : null, matched = false;
+        if (marker) {
+          let c = marker.elementClass;
+          if (c)
+            cls += " " + c;
+          for (let i = iOld; i < this.markers.length; i++)
+            if (this.markers[i].compare(marker)) {
+              skipTo = i;
+              matched = true;
+              break;
+            }
+        } else {
+          skipTo = this.markers.length;
+        }
+        while (iOld < skipTo) {
+          let next = this.markers[iOld++];
+          if (next.toDOM) {
+            next.destroy(domPos);
+            let after = domPos.nextSibling;
+            domPos.remove();
+            domPos = after;
+          }
+        }
+        if (!marker)
+          break;
+        if (marker.toDOM) {
+          if (matched)
+            domPos = domPos.nextSibling;
+          else
+            this.dom.insertBefore(marker.toDOM(view), domPos);
+        }
+        if (matched)
+          iOld++;
+      }
+      this.dom.className = cls;
+      this.markers = markers;
+    }
+    destroy() {
+      this.setMarkers(null, []);
+    }
+  };
+  function sameMarkers(a, b) {
+    if (a.length != b.length)
+      return false;
+    for (let i = 0; i < a.length; i++)
+      if (!a[i].compare(b[i]))
+        return false;
+    return true;
+  }
+  var lineNumberMarkers = /* @__PURE__ */ Facet.define();
+  var lineNumberConfig = /* @__PURE__ */ Facet.define({
+    combine(values) {
+      return combineConfig(values, { formatNumber: String, domEventHandlers: {} }, {
+        domEventHandlers(a, b) {
+          let result = Object.assign({}, a);
+          for (let event in b) {
+            let exists = result[event], add2 = b[event];
+            result[event] = exists ? (view, line, event2) => exists(view, line, event2) || add2(view, line, event2) : add2;
+          }
+          return result;
+        }
+      });
+    }
+  });
+  var NumberMarker = class extends GutterMarker {
+    constructor(number2) {
+      super();
+      this.number = number2;
+    }
+    eq(other) {
+      return this.number == other.number;
+    }
+    toDOM() {
+      return document.createTextNode(this.number);
+    }
+  };
+  function formatNumber(view, number2) {
+    return view.state.facet(lineNumberConfig).formatNumber(number2, view.state);
+  }
+  var lineNumberGutter = /* @__PURE__ */ activeGutters.compute([lineNumberConfig], (state) => ({
+    class: "cm-lineNumbers",
+    renderEmptyElements: false,
+    markers(view) {
+      return view.state.facet(lineNumberMarkers);
+    },
+    lineMarker(view, line, others) {
+      if (others.some((m) => m.toDOM))
+        return null;
+      return new NumberMarker(formatNumber(view, view.state.doc.lineAt(line.from).number));
+    },
+    widgetMarker: () => null,
+    lineMarkerChange: (update) => update.startState.facet(lineNumberConfig) != update.state.facet(lineNumberConfig),
+    initialSpacer(view) {
+      return new NumberMarker(formatNumber(view, maxLineNumber(view.state.doc.lines)));
+    },
+    updateSpacer(spacer, update) {
+      let max = formatNumber(update.view, maxLineNumber(update.view.state.doc.lines));
+      return max == spacer.number ? spacer : new NumberMarker(max);
+    },
+    domEventHandlers: state.facet(lineNumberConfig).domEventHandlers
+  }));
+  function lineNumbers(config = {}) {
+    return [
+      lineNumberConfig.of(config),
+      gutters(),
+      lineNumberGutter
+    ];
+  }
+  function maxLineNumber(lines) {
+    let last = 9;
+    while (last < lines)
+      last = last * 10 + 9;
+    return last;
+  }
 
   // node_modules/crelt/index.js
   function crelt() {
@@ -19570,7 +20003,7 @@
   ].concat(standardKeymap);
 
   // src/ui/CodeEditor.tsx
-  var _tmpl$ = /* @__PURE__ */ template(`<div class=repl-input>`);
+  var _tmpl$ = /* @__PURE__ */ template(`<div class=code-editor>`);
   var HL2Tag = {
     string: tags.string,
     number: tags.number,
@@ -19598,7 +20031,6 @@
       };
     }, {
       decorations(update) {
-        console.log("DECORATIONS", decorations2);
         return decorations2;
       }
     });
@@ -19620,7 +20052,7 @@
     return (() => {
       const _el$ = _tmpl$();
       use((el) => {
-        const extensions = () => [syntaxHighlighting(defaultHighlightStyle, {
+        const extensions = () => [lineNumbers(), syntaxHighlighting(defaultHighlightStyle, {
           fallback: true
         }), keymap.of(defaultKeymap), EditorView.updateListener.of((v) => {
           if (v.docChanged) {
@@ -19649,8 +20081,73 @@
     })();
   }
 
+  // src/ui/MemoryViewPanel.tsx
+  var _tmpl$2 = /* @__PURE__ */ template(`<div class=memory-view-panel>`);
+  function MemoryViewPanel(props) {
+    return _tmpl$2();
+  }
+
+  // src/ui/Page.tsx
+  var _tmpl$3 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><button class=run-button>Run</button><span class=run-feedback></span></div><pre class=code-output>`);
+  var DEFAULTCODE = `int printstr(char * str) {
+    while (*str != '\\0') {
+        putc(*str);
+
+        str += 1;
+    }
+}
+
+int printnum(int num) {
+    int placevalue = 1;
+    
+    while (placevalue <= num) {
+        placevalue *= 10;
+    }
+
+    placevalue /= 10;
+
+    while (placevalue > 0) {
+        putc(48 + ((num / placevalue) % 10));
+
+        placevalue /= 10;
+    }
+}
+
+printstr("Welcome to the Pointers language!\\n");
+printstr("The tiny not-exactly-a-subset-of-C, \\n");
+printstr("    intended to teach you how pointers work!\\n");
+printstr("You can print numbers too: ");
+printnum(123456);
+`;
+  function Page() {
+    const [code, setCode] = createSignal(DEFAULTCODE);
+    const [output2, setOutput] = createSignal(run(code()));
+    return (() => {
+      const _el$ = _tmpl$3(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.nextSibling, _el$6 = _el$3.nextSibling;
+      insert(_el$, createComponent(CodeEditor, {
+        code,
+        setCode
+      }), _el$2);
+      _el$4.$$click = () => {
+        console.log(parse(code()));
+        setOutput(run(code()));
+        console.log("OUTPUT", output2());
+      };
+      insert(_el$5, () => output2().type === "error" ? "Error" : "Success");
+      insert(_el$6, (() => {
+        const _c$ = createMemo(() => output2().type === "success");
+        return () => _c$() ? output2().finalState.stdout : output2().errors.map((err) => formatDiagnostic(err)).join("\n");
+      })());
+      insert(_el$, createComponent(MemoryViewPanel, {
+        output: output2
+      }), null);
+      createRenderEffect(() => (output2().type === "error" ? "red" : "green") != null ? _el$5.style.setProperty("color", output2().type === "error" ? "red" : "green") : _el$5.style.removeProperty("color"));
+      return _el$;
+    })();
+  }
+  delegateEvents(["click"]);
+
   // src/index.tsx
-  var _tmpl$2 = /* @__PURE__ */ template(`<div>`);
   var TEST3 = `
 int x;
 for (x = 65; x < 91; x += 1) {
@@ -19664,15 +20161,7 @@ for (x = 65; x < 91; x += 1) {
     console.log(output.errors.map((err) => formatDiagnostic(err)).join("\n"));
   }
   render(() => {
-    const [code, setCode] = createSignal("");
-    return (() => {
-      const _el$ = _tmpl$2();
-      insert(_el$, createComponent(CodeEditor, {
-        code,
-        setCode
-      }));
-      return _el$;
-    })();
+    return createComponent(Page, {});
   }, document.getElementById("main"));
 })();
 //# sourceMappingURL=index.js.map

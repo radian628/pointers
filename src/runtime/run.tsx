@@ -1,7 +1,11 @@
 import { allocateStringLiterals, concatArrayBuffers } from "../allocate";
 import { parseStatementList } from "../parser";
 import { HighlightedRange, ParseInput } from "../parser-utils";
-import { TypecheckContext, formatDiagnostic } from "../typecheck";
+import {
+  FunctionTypes,
+  TypecheckContext,
+  formatDiagnostic,
+} from "../typecheck";
 import { DefaultTypes, ExecutionContext, DefaultPrimitives } from "./runtime";
 
 function retrieveNullTerminatedString(mem: ArrayBuffer, i: number) {
@@ -18,12 +22,32 @@ function retrieveNullTerminatedString(mem: ArrayBuffer, i: number) {
 
 export type RunState = ReturnType<typeof run>;
 
+const defaultFunctions: FunctionTypes = new Map([
+  [
+    "putc",
+    {
+      args: [
+        {
+          definition: DefaultPrimitives.int,
+          pointers: 0,
+        },
+      ],
+      returns: {
+        definition: DefaultPrimitives.int,
+        pointers: 0,
+      },
+    },
+  ],
+]);
+
 export function parse(code: string) {
   const parseInput = new ParseInput(code, 0, 0);
 
   const tree = parseStatementList(parseInput);
 
-  const errors = tree.check(new TypecheckContext(DefaultTypes));
+  const errors = tree.check(
+    new TypecheckContext(DefaultTypes, defaultFunctions)
+  );
 
   return {
     tree,
@@ -37,7 +61,9 @@ export function run(code: string) {
 
   const tree = parseStatementList(parseInput);
 
-  const errors = tree.check(new TypecheckContext(DefaultTypes));
+  const errors = tree.check(
+    new TypecheckContext(DefaultTypes, defaultFunctions)
+  );
 
   if (errors.length > 0)
     return {
