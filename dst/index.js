@@ -18523,22 +18523,6 @@
       return errs2;
     return typeSuccess(pointerTo(lvalueType));
   }
-  var getLineAndCol = (str, index) => {
-    const line = 1 + (str.slice(0, index).match(/\n/g)?.length ?? 0);
-    const col = str.slice(0, index).match(/(\n|^).*$/)?.[0]?.length ?? 1;
-    return {
-      line,
-      col
-    };
-  };
-  function formatDiagnostic(diag) {
-    const {
-      line,
-      col
-    } = getLineAndCol(diag.node.start.text(), diag.node.start.position());
-    return `${diag.msg}
-    at '${diag.node.text()}' (${line}:${col})`;
-  }
 
   // src/parser-utils.tsx
   function matchOnString(matcher, str) {
@@ -20513,8 +20497,8 @@ printstr("    changes as the program continues executing.\\n");
       };
       insert(_el$12, () => recentlyCopied() ? "Copied!" : "Permalink");
       insert(_el$13, (() => {
-        const _c$ = createMemo(() => output().type === "success");
-        return () => _c$() ? output().finalState.stdout : output().errors.map((err) => formatDiagnostic(err)).join("\n");
+        const _c$ = createMemo(() => !!exec());
+        return () => _c$() ? exec().stdout : "";
       })());
       insert(_el$, createComponent(Show, {
         get when() {

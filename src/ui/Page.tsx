@@ -171,13 +171,7 @@ export function Page() {
             </button>
           </div>
         </div>
-        <pre class="code-output">
-          {output().type === "success"
-            ? output().finalState.stdout
-            : output()
-                .errors.map((err) => formatDiagnostic(err))
-                .join("\n")}
-        </pre>
+        <pre class="code-output">{exec() ? exec().stdout : ""}</pre>
       </div>
       <Show when={exec()}>
         <MemoryViewPanel
