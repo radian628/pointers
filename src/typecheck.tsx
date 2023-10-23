@@ -406,7 +406,10 @@ export function typecheckUnaryOperation(
 }
 
 export const getLineAndCol = (str: string, index: number) => {
+  // line number = number of newlines before this index
   const line = 1 + (str.slice(0, index).match(/\n/g)?.length ?? 0);
+
+  // col number = number of chars after the last newline
   const col = str.slice(0, index).match(/(\n|^).*$/)?.[0]?.length ?? 1;
 
   return { line, col };

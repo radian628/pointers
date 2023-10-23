@@ -102,8 +102,6 @@ export class FunctionDefNode extends ParseNode<{
   }
 
   *checkInner(ctx: TypecheckContext) {
-    // add function definition (do beforehand to allow recursion)
-
     const checks: TypeErrorFeedback[] = [];
     ctx.withStackFrame(() => {
       // typecheck fnargs
@@ -131,12 +129,21 @@ export class FunctionDefNode extends ParseNode<{
 
       const [errs, [rettype]] = organizeTypeErrors([mrettype]);
 
+      // add function definition (do beforehand to allow recursion)
       if (errs) {
         checks.push(...errs.why);
       } else {
         ctx.defineFunction(this.d.returnTypeAndName.d.name, rettype, argtypes);
       }
+
+      // validate function body
+      for (const stmt of this.d.body) {
+        checks.push(...stmt.check(ctx));
+      }
     });
+
+    console.log("fnchecks", checks);
+
     yield checks;
   }
 }

@@ -18,6 +18,21 @@ body {
   vertical-align: center;
   width: 5em;
 }
+@media screen and (max-width: 1250px) and (min-width: 1100px) {
+  .memory-cell.memory-cell.memory-cell.memory-cell.memory-cell.memory-cell {
+    width: 25%;
+  }
+}
+@media screen and (max-width: 1100px) {
+  .memory-cell.memory-cell.memory-cell.memory-cell.memory-cell.memory-cell {
+    width: 50%;
+  }
+}
+@media screen and (min-width: 1700px) {
+  .memory-cell.memory-cell.memory-cell.memory-cell.memory-cell.memory-cell {
+    width: 6.25%;
+  }
+}
 .page {
   display: flex;
   width: 100vw;
@@ -26,7 +41,7 @@ body {
   padding: 0;
 }
 .page .code-editor {
-  min-width: 300px;
+  min-width: 500px;
   border-right: 1px solid var(--border);
   max-height: 99vh;
   overflow: auto;
@@ -50,6 +65,7 @@ body {
 .page .memory-view-panel {
   overflow: auto;
   max-height: 99vh;
+  min-width: 30vw;
 }
 .page .memory-view-panel .memory-cell-container {
   display: flex;

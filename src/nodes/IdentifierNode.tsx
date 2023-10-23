@@ -55,7 +55,9 @@ export class IdentifierNode
   mapInner() {}
 
   type(ctx: TypecheckContext): MaybeType {
-    return ctx.getVariableType(this);
+    const t = ctx.getVariableType(this);
+    console.log(t);
+    return t;
   }
 
   *checkInner(ctx) {

@@ -18929,6 +18929,7 @@
       const mltype = this.d.left.typeLValue(ctx);
       const mrtype = this.d.right.type(ctx);
       const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
+      console.log(errs);
       yield errs?.why;
     }
   };
@@ -19102,7 +19103,11 @@
         } else {
           ctx.defineFunction(this.d.returnTypeAndName.d.name, rettype, argtypes);
         }
+        for (const stmt of this.d.body) {
+          checks.push(...stmt.check(ctx));
+        }
       });
+      console.log("fnchecks", checks);
       yield checks;
     }
   };
@@ -19136,7 +19141,9 @@
     mapInner() {
     }
     type(ctx) {
-      return ctx.getVariableType(this);
+      const t2 = ctx.getVariableType(this);
+      console.log(t2);
+      return t2;
     }
     *checkInner(ctx) {
       yield defaultExprCheck(this, ctx);
@@ -20385,7 +20392,7 @@
   var _tmpl$4 = /* @__PURE__ */ template(`<button class=menu-button>Back`);
   var _tmpl$23 = /* @__PURE__ */ template(`<button class=menu-button>Forward`);
   var _tmpl$32 = /* @__PURE__ */ template(`<input class=exec-index type=number min=1>`);
-  var _tmpl$42 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><div class=run-row><button class=menu-button></button><span class=run-feedback></span></div><div class=run-row></div></div><pre class=code-output>`);
+  var _tmpl$42 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><div class=run-row><button class=menu-button></button><span class=run-feedback></span></div><div class=run-row></div><div class=run-row><button class=menu-button></button></div></div><pre class=code-output>`);
   var DEFAULTCODE = `int printstr(char * str) {
     while (*str != '\\0') {
         putc(*str);
@@ -20415,15 +20422,33 @@ printstr("The tiny not-exactly-a-subset-of-C, \\n");
 printstr("    intended to teach you how pointers work!\\n");
 printstr("You can print numbers too: ");
 printnum(123456);
+printstr("\\nYou can use the 'run' button to run the code.\\n");
+printstr("After this, try using the back/forward buttons\\n");
+printstr("    or the number input box to see how memory\\n");
+printstr("    changes as the program continues executing.\\n");
 `;
+  function loadFromQueryParam() {
+    const param = new URLSearchParams(window.location.search).get("code");
+    if (!param)
+      return;
+    return base64ToBytes(param);
+  }
+  function base64ToBytes(base64) {
+    const binString = atob(base64);
+    return new TextDecoder().decode(Uint8Array.from(binString, (m) => m.codePointAt(0)));
+  }
+  function bytesToBase64(binString) {
+    return btoa(binString);
+  }
   function Page() {
-    const [code, setCode] = createSignal(DEFAULTCODE);
+    const [code, setCode] = createSignal(loadFromQueryParam() ?? DEFAULTCODE);
     const [output, setOutput] = createSignal(run(code()));
     const [exec, setExec] = createSignal();
     const [isRunning, setIsRunning] = createSignal(false);
     const [nodeHighlights, setNodeHighlights] = createSignal([]);
+    const [recentlyCopied, setRecentlyCopied] = createSignal(false);
     return (() => {
-      const _el$ = _tmpl$42(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.firstChild, _el$6 = _el$5.nextSibling, _el$7 = _el$4.nextSibling, _el$11 = _el$3.nextSibling;
+      const _el$ = _tmpl$42(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.firstChild, _el$6 = _el$5.nextSibling, _el$7 = _el$4.nextSibling, _el$11 = _el$7.nextSibling, _el$12 = _el$11.firstChild, _el$13 = _el$3.nextSibling;
       insert(_el$, createComponent(CodeEditor, {
         code,
         setCode,
@@ -20477,7 +20502,17 @@ printnum(123456);
           })(), " ", "/ ", createMemo(() => output().finalState.getindex()), ")"];
         }
       }));
-      insert(_el$11, (() => {
+      _el$12.$$click = (e) => {
+        const link = `${window.location.origin}${window.location.pathname}?code=${encodeURIComponent(bytesToBase64(code()))}`;
+        window.history.pushState(void 0, "", link);
+        navigator.clipboard.writeText(link);
+        setRecentlyCopied(true);
+        setTimeout(() => {
+          setRecentlyCopied(false);
+        }, 1500);
+      };
+      insert(_el$12, () => recentlyCopied() ? "Copied!" : "Permalink");
+      insert(_el$13, (() => {
         const _c$ = createMemo(() => output().type === "success");
         return () => _c$() ? output().finalState.stdout : output().errors.map((err) => formatDiagnostic(err)).join("\n");
       })());
