@@ -46,5 +46,7 @@ export class StructDefinitionNode extends ParseNode<{
     automap(this.d.fields, cb);
   }
 
-  *checkInner(ctx: TypecheckContext) {}
+  *checkInner(ctx: TypecheckContext) {
+    yield { node: this, msg: "Structs are currently not supported." };
+  }
 }

@@ -23,5 +23,8 @@ export class TypeAnnotationNode extends ParseNode<{
 
   *checkInner(
     ctx: TypecheckContext
-  ): IterableIterator<TypeErrorFeedback | TypeErrorFeedback[] | undefined> {}
+  ): IterableIterator<TypeErrorFeedback | TypeErrorFeedback[] | undefined> {
+    if (this.d.struct)
+      yield { node: this, msg: "Structs are currently not supported." };
+  }
 }

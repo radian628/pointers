@@ -19402,6 +19402,10 @@
       automap(this.d.fields, cb);
     }
     *checkInner(ctx) {
+      yield {
+        node: this,
+        msg: "Structs are currently not supported."
+      };
     }
   };
 
@@ -19576,6 +19580,11 @@
     mapInner() {
     }
     *checkInner(ctx) {
+      if (this.d.struct)
+        yield {
+          node: this,
+          msg: "Structs are currently not supported."
+        };
     }
   };
 
