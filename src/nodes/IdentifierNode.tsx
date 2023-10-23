@@ -12,7 +12,7 @@ export class IdentifierNode
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     const data = ctx.getvar(this.d.name);
 
@@ -23,13 +23,13 @@ export class IdentifierNode
       );
     }
 
-    ctx.pushAnonymous(data.type, ctx.getVar(data));
+    ctx.pushAnonymous(data.type, ctx.getVar(data), this);
 
     return ctx;
   }
 
   execLValue(ctx: ExecutionContext): ExecutionContext {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     const data = ctx.getvar(this.d.name);
 
@@ -45,7 +45,8 @@ export class IdentifierNode
         definition: data.type.definition,
         pointers: data.type.pointers + 1,
       },
-      data.offset
+      data.offset,
+      this
     );
 
     return ctx;

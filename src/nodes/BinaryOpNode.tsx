@@ -8,7 +8,11 @@ import {
   typecheckBinaryOperation,
 } from "../typecheck";
 
-export function handleBinaryOperation(ctx: ExecutionContext, op: Operator) {
+export function handleBinaryOperation(
+  ctx: ExecutionContext,
+  op: Operator,
+  node: ParseNode<any>
+) {
   const right = ctx.popTempValueAndGetBoth();
   const left = ctx.popTempValueAndGetBoth();
 
@@ -80,7 +84,7 @@ export function handleBinaryOperation(ctx: ExecutionContext, op: Operator) {
     outputType = ptrType.type;
 
     // push to stack
-    ctx.pushAnonymous(outputType, output);
+    ctx.pushAnonymous(outputType, output, node);
 
     return ctx;
   }
@@ -141,7 +145,7 @@ export function handleBinaryOperation(ctx: ExecutionContext, op: Operator) {
   }
 
   if (output !== undefined) {
-    ctx.pushAnonymous(outputType, output);
+    ctx.pushAnonymous(outputType, output, node);
   }
 
   return ctx;
@@ -160,11 +164,11 @@ export class BinaryOpNode
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
     ctx = this.d.left.exec(ctx);
     ctx = this.d.right.exec(ctx);
 
-    ctx = handleBinaryOperation(ctx, this.d.op);
+    ctx = handleBinaryOperation(ctx, this.d.op, this);
 
     return ctx;
   }

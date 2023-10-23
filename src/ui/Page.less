@@ -11,7 +11,7 @@ body {
 .page {
   display: flex;
   width: 100vw;
-  height: 100vh;
+  max-height: 100vh;
   margin: 0;
   padding: 0;
 
@@ -35,5 +35,22 @@ body {
 
     padding-right: 10px;
     border-right: 1px solid var(--border);
+  }
+
+  .memory-view-panel {
+    overflow: auto;
+    max-height: 99vh;
+    .memory-cell-container {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+
+      .memory-cell {
+        width: 140px;
+        font-family: monospace;
+        border: 1px solid var(--border);
+        height: 50px;
+      }
+    }
   }
 }

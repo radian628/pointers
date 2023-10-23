@@ -13,7 +13,7 @@ export class StructDefinitionNode extends ParseNode<{
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     // TODO: cehck if types and fieldtypes exist and decide what to do
 

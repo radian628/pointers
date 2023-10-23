@@ -22,7 +22,7 @@ export class IfNode extends ParseNode<{
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     ctx = this.d.condition.exec(ctx);
 

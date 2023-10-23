@@ -27,7 +27,7 @@ export class FunctionDefNode extends ParseNode<{
   }
 
   call(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     const ret = ctx.types.get(this.d.returnTypeAndName.d.type.d.name);
 
@@ -79,6 +79,7 @@ export class FunctionDefNode extends ParseNode<{
         offset: ctx.esp - offset,
         type: fnargType,
         name: arg.d.name,
+        creator: this,
       });
     }
 
@@ -87,7 +88,7 @@ export class FunctionDefNode extends ParseNode<{
     ctx = handleStatementList(ctx, this.d.body).ctx;
 
     if (!frame.freed) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx.popStackFrame();
     }
 

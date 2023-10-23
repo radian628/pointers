@@ -1,9 +1,11 @@
 import {
   ExecutionError,
+  FunctionCallNode,
   FunctionDefNode,
   ParseExpr,
   TypeAnnotationNode,
 } from "../ast";
+import { ParseNode } from "../parser-utils";
 
 // primitive type definition
 type PrimitiveTypeDefinition =
@@ -41,6 +43,7 @@ export type Type = {
 export type AnonymousVariableInstance = {
   type: Type;
   offset: number;
+  creator: ParseNode<any>;
 };
 export type VariableInstance = AnonymousVariableInstance & {
   name: string;
@@ -58,7 +61,10 @@ export type StackFrame = {
       }
     | {
         type: "external";
-        def: (ctx: ExecutionContext, args: ParseExpr[]) => ExecutionContext;
+        def: (
+          ctx: ExecutionContext,
+          call: FunctionCallNode
+        ) => ExecutionContext;
       }
   >;
   freed: boolean;
@@ -105,6 +111,12 @@ function bigintify(n: number, type: Type): number | bigint {
   return n;
 }
 
+function cloneArrayBuffer(buf: ArrayBuffer): ArrayBuffer {
+  const dst = new ArrayBuffer(buf.byteLength);
+  new Uint8Array(dst).set(new Uint8Array(buf));
+  return dst;
+}
+
 // TODO: make sure that editing one context doesn't affect previous ones
 // ideally all of these execution contexts should be able to function independently
 // of one another
@@ -115,6 +127,7 @@ export class ExecutionContext {
   esp: number;
   littleEndian: boolean;
   prev?: ExecutionContext;
+  next?: ExecutionContext;
   stack: StackFrame[];
   stdout: string;
 
@@ -127,16 +140,18 @@ export class ExecutionContext {
       types: DefinedTypes;
       stdout: string;
     },
-    prev?: ExecutionContext
+    prev?: ExecutionContext,
+    executor?: ParseNode<any>
   ) {
-    this.stack = opts.stack;
-    this.memory = opts.memory;
+    this.stack = opts.stack.slice();
+    this.memory = cloneArrayBuffer(opts.memory);
     this.littleEndian = opts.littleEndian;
     this.view = new DataView(this.memory);
     this.prev = prev;
-    this.types = opts.types;
+    this.types = new Map(opts.types);
     this.esp = opts.esp;
     this.stdout = opts.stdout;
+    if (this.prev) this.prev.next = this;
   }
 
   getvar(name: string) {
@@ -145,7 +160,7 @@ export class ExecutionContext {
     );
   }
 
-  clone() {
+  clone(executor: ParseNode<any>) {
     return new ExecutionContext(
       {
         memory: this.memory,
@@ -155,7 +170,8 @@ export class ExecutionContext {
         types: this.types,
         stdout: this.stdout,
       },
-      this
+      this,
+      executor
     );
   }
 
@@ -254,6 +270,7 @@ export class ExecutionContext {
   _push(
     type: Type,
     value: number | bigint | ArrayBuffer,
+    creator: ParseNode<any>,
     doNotSetVar?: boolean
   ): AnonymousVariableInstance {
     const esp = this.esp;
@@ -264,17 +281,19 @@ export class ExecutionContext {
     // because you add/remove it from it all-in-one
     if (type.definition.category === "struct" && type.pointers === 0) {
       for (const [fieldname, fieldvalue] of type.definition.fields) {
-        this._push(fieldvalue, bigintify(0, fieldvalue));
+        this._push(fieldvalue, bigintify(0, fieldvalue), creator);
       }
       return {
         type,
         offset: esp,
+        creator,
       };
     }
 
     const varInstance = {
       type,
       offset: esp,
+      creator,
     };
 
     this.esp += this.sizeof(type);
@@ -292,14 +311,24 @@ export class ExecutionContext {
     return this.stacktop().blocks[this.stacktop().blocks.length - 1];
   }
 
-  pushAnonymous(type: Type, value: number | bigint | ArrayBuffer) {
-    const instance = this._push(type, value);
+  pushAnonymous(
+    type: Type,
+    value: number | bigint | ArrayBuffer,
+    creator: ParseNode<any>
+  ) {
+    console.log("pushanon", creator);
+    const instance = this._push(type, value, creator);
 
     this.stacktop().temporaries.push(instance);
   }
 
-  pushNamed(type: Type, value: number | bigint | ArrayBuffer, name: string) {
-    const instance = this._push(type, value);
+  pushNamed(
+    type: Type,
+    value: number | bigint | ArrayBuffer,
+    name: string,
+    creator: ParseNode<any>
+  ) {
+    const instance = this._push(type, value, creator);
 
     const binding = {
       ...instance,

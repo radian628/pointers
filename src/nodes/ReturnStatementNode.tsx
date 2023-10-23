@@ -10,7 +10,7 @@ export class ReturnStatementNode extends ParseNode<{
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     ctx = this.d.expr?.exec(ctx) ?? ctx;
 
@@ -23,7 +23,7 @@ export class ReturnStatementNode extends ParseNode<{
 
     const frame = ctx.popStackFrame();
 
-    ctx.pushAnonymous(frame.returnType, outputValue);
+    ctx.pushAnonymous(frame.returnType, outputValue, this);
 
     return ctx;
   }

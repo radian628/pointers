@@ -37,7 +37,7 @@ export class LoopNode extends ParseNode<{
   // TODO: deal with stack misalignment from statements that contain expressions but don't do anything with them
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     const stacktop = ctx.stacktop();
 

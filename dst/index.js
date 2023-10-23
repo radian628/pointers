@@ -649,6 +649,100 @@
     };
   }
   var FALLBACK = Symbol("fallback");
+  function dispose(d) {
+    for (let i = 0; i < d.length; i++)
+      d[i]();
+  }
+  function mapArray(list, mapFn, options = {}) {
+    let items = [], mapped = [], disposers = [], len = 0, indexes = mapFn.length > 1 ? [] : null;
+    onCleanup(() => dispose(disposers));
+    return () => {
+      let newItems = list() || [], i, j;
+      newItems[$TRACK];
+      return untrack(() => {
+        let newLen = newItems.length, newIndices, newIndicesNext, temp, tempdisposers, tempIndexes, start, end, newEnd, item;
+        if (newLen === 0) {
+          if (len !== 0) {
+            dispose(disposers);
+            disposers = [];
+            items = [];
+            mapped = [];
+            len = 0;
+            indexes && (indexes = []);
+          }
+          if (options.fallback) {
+            items = [FALLBACK];
+            mapped[0] = createRoot((disposer) => {
+              disposers[0] = disposer;
+              return options.fallback();
+            });
+            len = 1;
+          }
+        } else if (len === 0) {
+          mapped = new Array(newLen);
+          for (j = 0; j < newLen; j++) {
+            items[j] = newItems[j];
+            mapped[j] = createRoot(mapper);
+          }
+          len = newLen;
+        } else {
+          temp = new Array(newLen);
+          tempdisposers = new Array(newLen);
+          indexes && (tempIndexes = new Array(newLen));
+          for (start = 0, end = Math.min(len, newLen); start < end && items[start] === newItems[start]; start++)
+            ;
+          for (end = len - 1, newEnd = newLen - 1; end >= start && newEnd >= start && items[end] === newItems[newEnd]; end--, newEnd--) {
+            temp[newEnd] = mapped[end];
+            tempdisposers[newEnd] = disposers[end];
+            indexes && (tempIndexes[newEnd] = indexes[end]);
+          }
+          newIndices = /* @__PURE__ */ new Map();
+          newIndicesNext = new Array(newEnd + 1);
+          for (j = newEnd; j >= start; j--) {
+            item = newItems[j];
+            i = newIndices.get(item);
+            newIndicesNext[j] = i === void 0 ? -1 : i;
+            newIndices.set(item, j);
+          }
+          for (i = start; i <= end; i++) {
+            item = items[i];
+            j = newIndices.get(item);
+            if (j !== void 0 && j !== -1) {
+              temp[j] = mapped[i];
+              tempdisposers[j] = disposers[i];
+              indexes && (tempIndexes[j] = indexes[i]);
+              j = newIndicesNext[j];
+              newIndices.set(item, j);
+            } else
+              disposers[i]();
+          }
+          for (j = start; j < newLen; j++) {
+            if (j in temp) {
+              mapped[j] = temp[j];
+              disposers[j] = tempdisposers[j];
+              if (indexes) {
+                indexes[j] = tempIndexes[j];
+                indexes[j](j);
+              }
+            } else
+              mapped[j] = createRoot(mapper);
+          }
+          mapped = mapped.slice(0, len = newLen);
+          items = newItems.slice(0);
+        }
+        return mapped;
+      });
+      function mapper(disposer) {
+        disposers[j] = disposer;
+        if (indexes) {
+          const [s, set] = createSignal(j);
+          indexes[j] = set;
+          return mapFn(newItems[j], s);
+        }
+        return mapFn(newItems[j]);
+      }
+    };
+  }
   var hydrationEnabled = false;
   function createComponent(Comp, props) {
     if (hydrationEnabled) {
@@ -661,6 +755,12 @@
       }
     }
     return untrack(() => Comp(props || {}));
+  }
+  function For(props) {
+    const fallback = "fallback" in props && {
+      fallback: () => props.fallback
+    };
+    return createMemo(mapArray(() => props.each, props.children, fallback || void 0));
   }
   var SuspenseListContext = createContext();
 
@@ -760,8 +860,8 @@
   var $$EVENTS = "_$DX_DELEGATE";
   function render(code, element, init, options = {}) {
     let disposer;
-    createRoot((dispose) => {
-      disposer = dispose;
+    createRoot((dispose2) => {
+      disposer = dispose2;
       element === document ? code() : insert(element, code(), element.firstChild ? null : void 0, init);
     }, options.owner);
     return () => {
@@ -1019,21 +1119,28 @@
       return BigInt(n);
     return n;
   }
+  function cloneArrayBuffer(buf) {
+    const dst = new ArrayBuffer(buf.byteLength);
+    new Uint8Array(dst).set(new Uint8Array(buf));
+    return dst;
+  }
   var ExecutionContext = class _ExecutionContext {
-    constructor(opts, prev) {
-      this.stack = opts.stack;
-      this.memory = opts.memory;
+    constructor(opts, prev, executor) {
+      this.stack = opts.stack.slice();
+      this.memory = cloneArrayBuffer(opts.memory);
       this.littleEndian = opts.littleEndian;
       this.view = new DataView(this.memory);
       this.prev = prev;
-      this.types = opts.types;
+      this.types = new Map(opts.types);
       this.esp = opts.esp;
       this.stdout = opts.stdout;
+      if (this.prev)
+        this.prev.next = this;
     }
     getvar(name2) {
       return this.stacktop().bindings.get(name2) ?? this.stack[0].bindings.get(name2);
     }
-    clone() {
+    clone(executor) {
       return new _ExecutionContext({
         memory: this.memory,
         littleEndian: this.littleEndian,
@@ -1041,7 +1148,7 @@
         esp: this.esp,
         types: this.types,
         stdout: this.stdout
-      }, this);
+      }, this, executor);
     }
     sizeof(type) {
       if (type.pointers > 0)
@@ -1105,20 +1212,22 @@
       assert(getterFn, "getterFn exists");
       return getterFn.apply(this.view, [instance.offset, this.littleEndian]);
     }
-    _push(type, value, doNotSetVar) {
+    _push(type, value, creator, doNotSetVar) {
       const esp = this.esp;
       if (type.definition.category === "struct" && type.pointers === 0) {
         for (const [fieldname, fieldvalue] of type.definition.fields) {
-          this._push(fieldvalue, bigintify(0, fieldvalue));
+          this._push(fieldvalue, bigintify(0, fieldvalue), creator);
         }
         return {
           type,
-          offset: esp
+          offset: esp,
+          creator
         };
       }
       const varInstance = {
         type,
-        offset: esp
+        offset: esp,
+        creator
       };
       this.esp += this.sizeof(type);
       if (!doNotSetVar)
@@ -1131,12 +1240,13 @@
     blocktop() {
       return this.stacktop().blocks[this.stacktop().blocks.length - 1];
     }
-    pushAnonymous(type, value) {
-      const instance = this._push(type, value);
+    pushAnonymous(type, value, creator) {
+      console.log("pushanon", creator);
+      const instance = this._push(type, value, creator);
       this.stacktop().temporaries.push(instance);
     }
-    pushNamed(type, value, name2) {
-      const instance = this._push(type, value);
+    pushNamed(type, value, name2, creator) {
+      const instance = this._push(type, value, creator);
       const binding = {
         ...instance,
         name: name2
@@ -1814,7 +1924,7 @@
   }
 
   // src/nodes/BinaryOpNode.tsx
-  function handleBinaryOperation(ctx, op) {
+  function handleBinaryOperation(ctx, op, node) {
     const right = ctx.popTempValueAndGetBoth();
     const left = ctx.popTempValueAndGetBoth();
     let lv = left.value;
@@ -1852,7 +1962,7 @@
         pointers: ptrType.type.pointers - 1
       });
       outputType = ptrType.type;
-      ctx.pushAnonymous(outputType, output2);
+      ctx.pushAnonymous(outputType, output2, node);
       return ctx;
     }
     switch (op) {
@@ -1902,7 +2012,7 @@
         break;
     }
     if (output2 !== void 0) {
-      ctx.pushAnonymous(outputType, output2);
+      ctx.pushAnonymous(outputType, output2, node);
     }
     return ctx;
   }
@@ -1911,10 +2021,10 @@
       return `(${this.d.op} ${this.d.left.debug()} ${this.d.right.debug()})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = this.d.left.exec(ctx);
       ctx = this.d.right.exec(ctx);
-      ctx = handleBinaryOperation(ctx, this.d.op);
+      ctx = handleBinaryOperation(ctx, this.d.op, this);
       return ctx;
     }
     // TODO: Implement lvalues here later
@@ -1936,20 +2046,21 @@
       return `(${this.d.op ?? ""}= ${this.d.left.debug()} ${this.d.right.debug()})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = this.d.left.execLValue(ctx);
       if (this.d.op) {
         ctx = this.d.left.exec(ctx);
       }
       ctx = this.d.right.exec(ctx);
       if (this.d.op) {
-        handleBinaryOperation(ctx, this.d.op);
+        handleBinaryOperation(ctx, this.d.op, this);
       }
       const right = ctx.popTempValueAndGetBoth();
       const left = ctx.popTempValueAndGetBoth();
       ctx.setVar({
         type: right.typeinfo.type,
-        offset: left.value
+        offset: left.value,
+        creator: this
       }, right.value);
       return ctx;
     }
@@ -2000,7 +2111,7 @@
       return `(${this.d.name} ${this.d.args.map((arg) => arg.debug()).join(" ")})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       for (const arg of this.d.args) {
         ctx = arg.exec(ctx);
       }
@@ -2012,7 +2123,7 @@
       if (fndef.type === "internal") {
         ctx = fndef.def.call(ctx);
       } else {
-        ctx = fndef.def(ctx, this.d.args);
+        ctx = fndef.def(ctx, this);
       }
       return ctx;
     }
@@ -2063,7 +2174,7 @@
       return ctx;
     }
     call(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       const ret = ctx.types.get(this.d.returnTypeAndName.d.type.d.name);
       if (!ret)
         throw new ExecutionError(`Return type '${this.d.returnTypeAndName.d.type.d.name}' does not exist.`, ctx);
@@ -2095,13 +2206,14 @@
         frame.bindings.set(arg.d.name, {
           offset: ctx.esp - offset,
           type: fnargType,
-          name: arg.d.name
+          name: arg.d.name,
+          creator: this
         });
       }
       ctx.stack.push(frame);
       ctx = handleStatementList(ctx, this.d.body).ctx;
       if (!frame.freed) {
-        ctx = ctx.clone();
+        ctx = ctx.clone(this);
         ctx.popStackFrame();
       }
       return ctx;
@@ -2145,16 +2257,16 @@
       return this.d.name;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       const data = ctx.getvar(this.d.name);
       if (!data) {
         throw new ExecutionError(`Identifier '${this.d.name}' does not exist.`, ctx);
       }
-      ctx.pushAnonymous(data.type, ctx.getVar(data));
+      ctx.pushAnonymous(data.type, ctx.getVar(data), this);
       return ctx;
     }
     execLValue(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       const data = ctx.getvar(this.d.name);
       if (!data) {
         throw new ExecutionError(`Identifier '${this.d.name}' does not exist.`, ctx);
@@ -2162,7 +2274,7 @@
       ctx.pushAnonymous({
         definition: data.type.definition,
         pointers: data.type.pointers + 1
-      }, data.offset);
+      }, data.offset, this);
       return ctx;
     }
     mapInner() {
@@ -2184,7 +2296,7 @@
       return `(if ${this.d.condition.debug()} (${autodebug(this.d.body)}) ${this.d.elseif ? `else ${autodebug(this.d.elseif)}` : ""})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = this.d.condition.exec(ctx);
       const top2 = ctx.popTempValueAndGetData();
       if (top2 == 0) {
@@ -2222,7 +2334,7 @@
     }
     // TODO: deal with stack misalignment from statements that contain expressions but don't do anything with them
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       const stacktop = ctx.stacktop();
       const end = () => {
         ctx.popBlock();
@@ -2324,8 +2436,8 @@
       }
     }
     exec(ctx) {
-      const ctx2 = ctx.clone();
-      ctx2.pushAnonymous(this.determineNumericType(), this.d.num);
+      const ctx2 = ctx.clone(this);
+      ctx2.pushAnonymous(this.determineNumericType(), this.d.num, this);
       return ctx2;
     }
     mapInner() {
@@ -2347,7 +2459,7 @@
       return `(return ${autodebug(this.d.expr)})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = this.d.expr?.exec(ctx) ?? ctx;
       let outputValue = 0;
       if (this.d.expr) {
@@ -2355,7 +2467,7 @@
         outputValue = output2.value;
       }
       const frame = ctx.popStackFrame();
-      ctx.pushAnonymous(frame.returnType, outputValue);
+      ctx.pushAnonymous(frame.returnType, outputValue, this);
       return ctx;
     }
     mapInner(cb) {
@@ -2374,7 +2486,7 @@
       return this.d.body.map((s) => s.debug()).join("\n");
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = handleStatementList(ctx, this.d.body).ctx;
       return ctx;
     }
@@ -2397,8 +2509,8 @@
       return `${JSON.stringify(this.d.str)}`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
-      ctx.pushAnonymous(this._type(), this.d.pointer);
+      ctx = ctx.clone(this);
+      ctx.pushAnonymous(this._type(), this.d.pointer, this);
       return ctx;
     }
     mapInner(callback) {
@@ -2423,7 +2535,7 @@
       return `(struct ${this.d.name} (${autodebug(this.d.fields)}))`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx.types.set(this.d.name, {
         category: "struct",
         name: this.d.name,
@@ -2455,7 +2567,7 @@
       const data = execAndRetrieveData(ctx, this.d.value);
       ctx = data.ctx;
       const type = constructTypeFromNode(ctx, this.d.type);
-      ctx.pushAnonymous(type, data.data.value);
+      ctx.pushAnonymous(type, data.data.value, this);
       return ctx;
     }
     mapInner(cb) {
@@ -2477,7 +2589,7 @@
       return `(${this.d.op} ${this.d.value.debug()})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = this.d.op === "&" ? this.d.value.execLValue(ctx) : this.d.value.exec(ctx);
       const value = ctx.popTempValueAndGetBoth();
       let output2;
@@ -2501,7 +2613,8 @@
           };
           output2 = ctx.getVar({
             offset: Number(value.value),
-            type: outputType
+            type: outputType,
+            creator: this
           });
           break;
         case "~":
@@ -2509,7 +2622,7 @@
           outputType = value.typeinfo.type;
           break;
       }
-      ctx.pushAnonymous(outputType, output2);
+      ctx.pushAnonymous(outputType, output2, this);
       return ctx;
     }
     mapInner(cb) {
@@ -2535,7 +2648,7 @@
       return `(let ${this.d.definition.debug()} ${autodebug(this.d.value)})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       const typeOfThisVar = ctx.types.get(this.d.definition.d.type.d.name);
       if (!typeOfThisVar)
         throw new ExecutionError(`The type '${this.d.definition.d.type.d.name}' does not exist.`, ctx);
@@ -2548,7 +2661,7 @@
       ctx.pushNamed({
         definition: typeOfThisVar,
         pointers: this.d.definition.d.type.d.pointers
-      }, value, this.d.definition.d.name);
+      }, value, this.d.definition.d.name, this);
       return ctx;
     }
     mapInner(cb) {
@@ -2587,7 +2700,7 @@
       return `(${autodebug(this.d.body)})`;
     }
     exec(ctx) {
-      ctx = ctx.clone();
+      ctx = ctx.clone(this);
       ctx = handleStatementList(ctx, this.d.body).ctx;
       return ctx;
     }
@@ -3177,8 +3290,9 @@
         temporaries: [],
         functionDefinitions: /* @__PURE__ */ new Map([["printf", {
           type: "external",
-          def(ctx, args) {
-            ctx = ctx.clone();
+          def(ctx, call) {
+            const args = call.d.args;
+            ctx = ctx.clone(call);
             ctx = args[0].exec(ctx);
             const value = ctx.popTempValueAndGetData();
             const text = new TextDecoder().decode(retrieveNullTerminatedString(ctx.memory, value));
@@ -3187,8 +3301,9 @@
           }
         }], ["putc", {
           type: "external",
-          def(ctx, args) {
-            ctx = ctx.clone();
+          def(ctx, call) {
+            const args = call.d.args;
+            ctx = ctx.clone(call);
             ctx = args[0].exec(ctx);
             const value = ctx.popTempValueAndGetData();
             ctx.stdout += String.fromCharCode(Number(value));
@@ -20059,7 +20174,7 @@
             const docstring = v.state.doc.toString();
             props.setCode(docstring);
           }
-        }), pointerSyntaxHighlighterPlugin(), pointersDiagnosticPlugin()];
+        }), pointerSyntaxHighlighterPlugin(), pointersDiagnosticPlugin(), EditorView.editable.of(!props.isRunning())];
         const state = EditorState.create({
           doc: props.code(),
           extensions: extensions()
@@ -20082,13 +20197,94 @@
   }
 
   // src/ui/MemoryViewPanel.tsx
-  var _tmpl$2 = /* @__PURE__ */ template(`<div class=memory-view-panel>`);
+  var _tmpl$2 = /* @__PURE__ */ template(`<div class=memory-cell><div class=memory-cell-value>0x<!> (<!>)</div><div class=memory-cell-variables>`);
+  var _tmpl$22 = /* @__PURE__ */ template(`<div>+`);
+  var _tmpl$3 = /* @__PURE__ */ template(`<div class=memory-view-panel><div class=memory-cell-container>`);
+  function getAllVariableBindings(ctx) {
+    return ctx.stack.map((frame) => frame.temporaries.map((t2) => ({
+      variable: t2,
+      name: void 0
+    })).concat([...frame.bindings.entries()].map((binding) => ({
+      variable: binding[1],
+      name: binding[0]
+    })))).flat(1);
+  }
+  function generateVariableMemoryMap(ctx) {
+    const allBindings = getAllVariableBindings(ctx);
+    console.log(allBindings);
+    const largestAddress = Math.max(...allBindings.map((b) => b.variable.offset + ctx.sizeof(b.variable.type)));
+    const metadata = [];
+    const memArray = new Uint8Array(ctx.memory);
+    for (let i = 0; i < largestAddress; i++) {
+      metadata.push({
+        variables: [],
+        value: memArray[i]
+      });
+    }
+    for (const binding of allBindings) {
+      for (let i = 0; i < ctx.sizeof(binding.variable.type); i++) {
+        metadata[i + binding.variable.offset].variables.push({
+          name: binding.name,
+          type: binding.variable.type,
+          offset: i,
+          creator: binding.variable.creator
+        });
+      }
+    }
+    return metadata;
+  }
+  function getVarName(c) {
+    if (c.name)
+      return c.name;
+    console.log(c);
+    if (!c.creator)
+      return;
+    const start = getLineAndCol(c.creator.start.text(), c.creator.start.position());
+    const end = getLineAndCol(c.creator.end.text(), c.creator.end.position());
+    return start.line == end.line ? `(${start.line}:${start.col} - ${end.col})` : `(${start.line}:${start.col} - ${end.line}:${end.col})`;
+  }
+  function MemoryCell(props) {
+    return (() => {
+      const _el$ = _tmpl$2(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$6 = _el$3.nextSibling, _el$4 = _el$6.nextSibling, _el$7 = _el$4.nextSibling, _el$5 = _el$7.nextSibling, _el$8 = _el$2.nextSibling;
+      insert(_el$2, () => props.value().value.toString(16).padStart(2, "0"), _el$6);
+      insert(_el$2, () => String.fromCharCode(props.value().value), _el$7);
+      insert(_el$8, createComponent(For, {
+        get each() {
+          return props.value().variables;
+        },
+        children: (v) => (() => {
+          const _el$9 = _tmpl$22(), _el$10 = _el$9.firstChild;
+          insert(_el$9, () => getVarName(v), _el$10);
+          insert(_el$9, () => v.offset, null);
+          return _el$9;
+        })()
+      }));
+      return _el$;
+    })();
+  }
   function MemoryViewPanel(props) {
-    return _tmpl$2();
+    const memVarMap = createMemo(() => {
+      return generateVariableMemoryMap(props.output());
+    });
+    createEffect(() => {
+      console.log("VARMAP", memVarMap());
+    });
+    return (() => {
+      const _el$11 = _tmpl$3(), _el$12 = _el$11.firstChild;
+      insert(_el$12, createComponent(For, {
+        get each() {
+          return memVarMap();
+        },
+        children: (cell) => createComponent(MemoryCell, {
+          value: () => cell
+        })
+      }));
+      return _el$11;
+    })();
   }
 
   // src/ui/Page.tsx
-  var _tmpl$3 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><button class=run-button>Run</button><span class=run-feedback></span></div><pre class=code-output>`);
+  var _tmpl$4 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><button class=run-button></button><span class=run-feedback></span></div><pre class=code-output>`);
   var DEFAULTCODE = `int printstr(char * str) {
     while (*str != '\\0') {
         putc(*str);
@@ -20122,25 +20318,40 @@ printnum(123456);
   function Page() {
     const [code, setCode] = createSignal(DEFAULTCODE);
     const [output2, setOutput] = createSignal(run(code()));
+    const [exec, setExec] = createSignal();
+    const [isRunning, setIsRunning] = createSignal(false);
     return (() => {
-      const _el$ = _tmpl$3(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.nextSibling, _el$6 = _el$3.nextSibling;
+      const _el$ = _tmpl$4(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.nextSibling, _el$6 = _el$3.nextSibling;
       insert(_el$, createComponent(CodeEditor, {
         code,
-        setCode
+        setCode,
+        isRunning
       }), _el$2);
       _el$4.$$click = () => {
-        console.log(parse(code()));
-        setOutput(run(code()));
-        console.log("OUTPUT", output2());
+        setIsRunning(!isRunning());
+        if (isRunning()) {
+          console.log(parse(code()));
+          setOutput(run(code()));
+          const o = output2().finalState;
+          console.log("FINALSTATE", o);
+          if (o)
+            setExec(o);
+        } else {
+          setExec();
+        }
       };
+      insert(_el$4, () => isRunning() ? "Stop" : "Run");
       insert(_el$5, () => output2().type === "error" ? "Error" : "Success");
       insert(_el$6, (() => {
         const _c$ = createMemo(() => output2().type === "success");
         return () => _c$() ? output2().finalState.stdout : output2().errors.map((err) => formatDiagnostic(err)).join("\n");
       })());
-      insert(_el$, createComponent(MemoryViewPanel, {
-        output: output2
-      }), null);
+      insert(_el$, (() => {
+        const _c$2 = createMemo(() => !!exec());
+        return () => _c$2() && createComponent(MemoryViewPanel, {
+          output: exec
+        });
+      })(), null);
       createRenderEffect(() => (output2().type === "error" ? "red" : "green") != null ? _el$5.style.setProperty("color", output2().type === "error" ? "red" : "green") : _el$5.style.removeProperty("color"));
       return _el$;
     })();

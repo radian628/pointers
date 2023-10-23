@@ -17,7 +17,7 @@ export class AssignmentNode extends ParseNode<{
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     ctx = this.d.left.execLValue(ctx);
 
@@ -28,7 +28,7 @@ export class AssignmentNode extends ParseNode<{
     ctx = this.d.right.exec(ctx);
 
     if (this.d.op) {
-      handleBinaryOperation(ctx, this.d.op);
+      handleBinaryOperation(ctx, this.d.op, this);
     }
 
     const right = ctx.popTempValueAndGetBoth();
@@ -40,6 +40,7 @@ export class AssignmentNode extends ParseNode<{
       {
         type: right.typeinfo.type,
         offset: left.value as number,
+        creator: this,
       },
       right.value
     );

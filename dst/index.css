@@ -10,7 +10,7 @@ body {
 .page {
   display: flex;
   width: 100vw;
-  height: 100vh;
+  max-height: 100vh;
   margin: 0;
   padding: 0;
 }
@@ -30,5 +30,20 @@ body {
 }
 .page .code-output-panel .code-output {
   font-family: monospace;
+}
+.page .memory-view-panel {
+  overflow: auto;
+  max-height: 99vh;
+}
+.page .memory-view-panel .memory-cell-container {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.page .memory-view-panel .memory-cell-container .memory-cell {
+  width: 140px;
+  font-family: monospace;
+  border: 1px solid var(--border);
+  height: 50px;
 }
 /*# sourceMappingURL=index.css.map */

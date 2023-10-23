@@ -5,6 +5,7 @@ import { createSignal } from "solid-js";
 import { RunState, parse, run } from "../runtime/run";
 import { formatDiagnostic } from "../typecheck";
 import { MemoryViewPanel } from "./MemoryViewPanel";
+import { ExecutionContext } from "../runtime/runtime";
 
 const DEFAULTCODE = `int printstr(char * str) {
     while (*str != '\\0') {
@@ -42,20 +43,35 @@ export function Page() {
 
   const [output, setOutput] = createSignal<RunState>(run(code()));
 
+  const [exec, setExec] = createSignal<ExecutionContext>();
+
+  const [isRunning, setIsRunning] = createSignal(false);
+
   return (
     <div class="page">
-      <CodeEditor code={code} setCode={setCode}></CodeEditor>
+      <CodeEditor
+        code={code}
+        setCode={setCode}
+        isRunning={isRunning}
+      ></CodeEditor>
       <div class="code-output-panel">
         <div class="run-panel">
           <button
             class="run-button"
             onClick={() => {
-              console.log(parse(code()));
-              setOutput(run(code()));
-              console.log("OUTPUT", output());
+              setIsRunning(!isRunning());
+              if (isRunning()) {
+                console.log(parse(code()));
+                setOutput(run(code()));
+                const o = output().finalState;
+                console.log("FINALSTATE", o);
+                if (o) setExec(o);
+              } else {
+                setExec();
+              }
             }}
           >
-            Run
+            {isRunning() ? "Stop" : "Run"}
           </button>
           <span
             class="run-feedback"
@@ -74,7 +90,7 @@ export function Page() {
                 .join("\n")}
         </pre>
       </div>
-      <MemoryViewPanel output={output}></MemoryViewPanel>
+      {exec() && <MemoryViewPanel output={exec}></MemoryViewPanel>}
     </div>
   );
 }

@@ -24,7 +24,7 @@ export class TypecastNode
     ctx = data.ctx;
 
     const type = constructTypeFromNode(ctx, this.d.type);
-    ctx.pushAnonymous(type, data.data.value);
+    ctx.pushAnonymous(type, data.data.value, this);
 
     return ctx;
   }

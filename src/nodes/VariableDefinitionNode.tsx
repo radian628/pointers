@@ -18,7 +18,7 @@ export class VariableDefinitionNode extends ParseNode<{
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     const typeOfThisVar = ctx.types.get(this.d.definition.d.type.d.name);
 
@@ -43,7 +43,8 @@ export class VariableDefinitionNode extends ParseNode<{
         pointers: this.d.definition.d.type.d.pointers,
       },
       value,
-      this.d.definition.d.name
+      this.d.definition.d.name,
+      this
     );
 
     return ctx;

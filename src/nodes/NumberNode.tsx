@@ -43,10 +43,10 @@ export class NumberNode
   }
 
   exec(ctx: ExecutionContext) {
-    const ctx2 = ctx.clone();
+    const ctx2 = ctx.clone(this);
 
     // default to 32-bit temp values
-    ctx2.pushAnonymous(this.determineNumericType(), this.d.num);
+    ctx2.pushAnonymous(this.determineNumericType(), this.d.num, this);
 
     return ctx2;
   }

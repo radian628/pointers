@@ -22,7 +22,7 @@ export class UnaryOpNode
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
     ctx =
       this.d.op === "&" ? this.d.value.execLValue(ctx) : this.d.value.exec(ctx);
 
@@ -54,6 +54,7 @@ export class UnaryOpNode
         output = ctx.getVar({
           offset: Number(value.value),
           type: outputType,
+          creator: this,
         });
         break;
       case "~":
@@ -62,7 +63,7 @@ export class UnaryOpNode
         break;
     }
 
-    ctx.pushAnonymous(outputType, output);
+    ctx.pushAnonymous(outputType, output, this);
 
     return ctx;
   }

@@ -405,7 +405,7 @@ export function typecheckUnaryOperation(
   return typeSuccess(pointerTo(lvalueType));
 }
 
-const getLineAndCol = (str: string, index: number) => {
+export const getLineAndCol = (str: string, index: number) => {
   const line = 1 + (str.slice(0, index).match(/\n/g)?.length ?? 0);
   const col = str.slice(0, index).match(/(\n|^).*$/)?.[0]?.length ?? 1;
 

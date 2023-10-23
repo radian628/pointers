@@ -98,8 +98,9 @@ export function run(code: string) {
               "printf",
               {
                 type: "external",
-                def(ctx, args) {
-                  ctx = ctx.clone();
+                def(ctx, call) {
+                  const args = call.d.args;
+                  ctx = ctx.clone(call);
                   ctx = args[0].exec(ctx);
                   const value = ctx.popTempValueAndGetData();
 
@@ -117,8 +118,9 @@ export function run(code: string) {
               "putc",
               {
                 type: "external",
-                def(ctx, args) {
-                  ctx = ctx.clone();
+                def(ctx, call) {
+                  const args = call.d.args;
+                  ctx = ctx.clone(call);
                   ctx = args[0].exec(ctx);
                   const value = ctx.popTempValueAndGetData();
                   ctx.stdout += String.fromCharCode(Number(value));

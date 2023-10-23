@@ -15,9 +15,9 @@ export class StringLiteralNode
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
-    ctx.pushAnonymous(this._type(), this.d.pointer);
+    ctx.pushAnonymous(this._type(), this.d.pointer, this);
 
     return ctx;
   }

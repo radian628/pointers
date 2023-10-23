@@ -25,7 +25,7 @@ export class FunctionCallNode
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
     for (const arg of this.d.args) {
       ctx = arg.exec(ctx);
     }
@@ -40,7 +40,7 @@ export class FunctionCallNode
     if (fndef.type === "internal") {
       ctx = fndef.def.call(ctx);
     } else {
-      ctx = fndef.def(ctx, this.d.args);
+      ctx = fndef.def(ctx, this);
     }
 
     return ctx;

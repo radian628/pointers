@@ -82,6 +82,7 @@ function pointersDiagnosticPlugin() {
 export function CodeEditor(props: {
   code: () => string;
   setCode: (code: string) => void;
+  isRunning: () => boolean;
 }) {
   return (
     <div
@@ -99,6 +100,7 @@ export function CodeEditor(props: {
           }),
           pointerSyntaxHighlighterPlugin(),
           pointersDiagnosticPlugin(),
+          EditorView.editable.of(!props.isRunning()),
         ];
 
         const state = EditorState.create({

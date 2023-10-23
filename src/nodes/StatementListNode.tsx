@@ -11,7 +11,7 @@ export class StatementListNode extends ParseNode<{
   }
 
   exec(ctx: ExecutionContext) {
-    ctx = ctx.clone();
+    ctx = ctx.clone(this);
 
     ctx = handleStatementList(ctx, this.d.body).ctx;
 
