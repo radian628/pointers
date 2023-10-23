@@ -18755,7 +18755,6 @@
       muts.expect(/[\s\S]/, "operator");
       i++;
       if (i > 1e4) {
-        console.log("ASDASD", i, muts);
         break;
       }
     }

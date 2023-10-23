@@ -450,7 +450,6 @@ export function seek(
     muts.expect(/[\s\S]/, "operator");
     i++;
     if (i > 10000) {
-      console.log("ASDASD", i, muts);
       break;
     }
   }
