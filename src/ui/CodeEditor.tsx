@@ -18,6 +18,7 @@ import {
 } from "@codemirror/language";
 import { parse, run } from "../runtime/run";
 import { Highlight } from "../parser-utils";
+import { ExecutionContext } from "../runtime/runtime";
 
 const HL2Tag: Record<Highlight, Tag> = {
   string: tags.string,
@@ -79,10 +80,47 @@ function pointersDiagnosticPlugin() {
   });
 }
 
+function pointersExecutorHighlighterPlugin(exec: ExecutionContext) {
+  let decorations = RangeSet.of<Decoration>([]);
+
+  return ViewPlugin.define(
+    (view) => {
+      return {
+        update(update) {
+          console.log(
+            "Exec",
+            exec,
+            exec.executor.start.position(),
+            exec.executor.end.position()
+          );
+          decorations = RangeSet.of(
+            exec && exec.executor
+              ? [
+                  Decoration.mark({
+                    class: "currently-executing-highlight",
+                  }).range(
+                    exec.executor.start.position(),
+                    exec.executor.end.position()
+                  ),
+                ]
+              : []
+          );
+        },
+      };
+    },
+    {
+      decorations(update) {
+        return decorations;
+      },
+    }
+  );
+}
+
 export function CodeEditor(props: {
   code: () => string;
   setCode: (code: string) => void;
   isRunning: () => boolean;
+  exec: () => ExecutionContext | undefined;
 }) {
   return (
     <div
@@ -101,6 +139,7 @@ export function CodeEditor(props: {
           pointerSyntaxHighlighterPlugin(),
           pointersDiagnosticPlugin(),
           EditorView.editable.of(!props.isRunning()),
+          pointersExecutorHighlighterPlugin(props.exec()),
         ];
 
         const state = EditorState.create({
@@ -109,6 +148,8 @@ export function CodeEditor(props: {
         });
 
         createEffect(() => {
+          props.isRunning();
+          props.exec();
           untrack(() => {
             view.setState(
               EditorState.create({

@@ -1,7 +1,7 @@
 import "./Page.less";
 
 import { CodeEditor } from "./CodeEditor";
-import { createSignal } from "solid-js";
+import { Show, createSignal } from "solid-js";
 import { RunState, parse, run } from "../runtime/run";
 import { formatDiagnostic } from "../typecheck";
 import { MemoryViewPanel } from "./MemoryViewPanel";
@@ -53,6 +53,7 @@ export function Page() {
         code={code}
         setCode={setCode}
         isRunning={isRunning}
+        exec={exec}
       ></CodeEditor>
       <div class="code-output-panel">
         <div class="run-panel">
@@ -81,6 +82,24 @@ export function Page() {
           >
             {output().type === "error" ? "Error" : "Success"}
           </span>
+          <Show when={exec()}>
+            <button
+              onClick={() => {
+                const prev = exec().prev;
+                if (prev) setExec(prev);
+              }}
+            >
+              Back
+            </button>
+            <button
+              onClick={() => {
+                const next = exec().next;
+                if (next) setExec(next);
+              }}
+            >
+              Forward
+            </button>
+          </Show>
         </div>
         <pre class="code-output">
           {output().type === "success"
@@ -90,7 +109,9 @@ export function Page() {
                 .join("\n")}
         </pre>
       </div>
-      {exec() && <MemoryViewPanel output={exec}></MemoryViewPanel>}
+      <Show when={exec()}>
+        <MemoryViewPanel output={exec}></MemoryViewPanel>
+      </Show>
     </div>
   );
 }

@@ -756,11 +756,39 @@
     }
     return untrack(() => Comp(props || {}));
   }
+  var narrowedError = (name2) => `Stale read from <${name2}>.`;
   function For(props) {
     const fallback = "fallback" in props && {
       fallback: () => props.fallback
     };
     return createMemo(mapArray(() => props.each, props.children, fallback || void 0));
+  }
+  function Show(props) {
+    const keyed = props.keyed;
+    const condition = createMemo(() => props.when, void 0, {
+      equals: (a, b) => keyed ? a === b : !a === !b
+    });
+    return createMemo(
+      () => {
+        const c = condition();
+        if (c) {
+          const child = props.children;
+          const fn = typeof child === "function" && child.length > 0;
+          return fn ? untrack(
+            () => child(
+              keyed ? c : () => {
+                if (!untrack(condition))
+                  throw narrowedError("Show");
+                return props.when;
+              }
+            )
+          ) : child;
+        }
+        return props.fallback;
+      },
+      void 0,
+      void 0
+    );
   }
   var SuspenseListContext = createContext();
 
@@ -1082,2249 +1110,6 @@
     } else
       parent.insertBefore(node, marker);
     return [node];
-  }
-
-  // src/lexing.tsx
-  var hexDigit = "[0-9a-fA-F]";
-  var stringLiteralWithEscapeCodesAnd = (strs) => ["\\\\(n|t|r|0|\\\\)", `\\\\x${hexDigit}{2}`, `\\\\u${hexDigit}{4}`, ...strs].join("|");
-  var charLiteralRegex = new RegExp(`'(${stringLiteralWithEscapeCodesAnd(["[^']"])})'`);
-  var stringLiteralRegex = new RegExp(`"(${stringLiteralWithEscapeCodesAnd(['[^"]'])})*"`);
-  var numberRegex = /[0-9]+(\.[0-9]*)?/;
-  var identRegex = /[a-zA-Z_][a-zA-Z0-9_]*/;
-  var skipRegex = /[ \r\t\n]+/;
-  function escapeRegex(string2) {
-    return string2.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
-  }
-  var opSymbols = ["+", "-", "*", "/", "||", "&&", "^^", "==", "!=", ">=", "<=", ">", "<", "&", "|", "^", "<<", ">>", ".", "->", "%"];
-  var opRegex = new RegExp(`(${opSymbols.map((s) => escapeRegex(s)).join("|")})(?!=)`);
-  var opEqualsRegex = new RegExp(`(${opSymbols.map((s) => escapeRegex(s)).join("|")}|)=`);
-  console.log(opRegex);
-  var numberTypeRegex = /[fui]/g;
-  var unaryOpRegex = ["!", "*", "&", "~"];
-
-  // src/runtime/runtime.tsx
-  function assert(cond, msg) {
-    if (!cond)
-      throw new Error("ASSERTION FAILED: " + msg);
-  }
-  function notNull(v, name2, ctx) {
-    if (v === void 0 || v === null) {
-      console.log(ctx);
-      throw new ExecutionError(`EXPECTED ${name2} TO NOT BE UNDEFINED.`, ctx);
-    }
-    return v;
-  }
-  function bigintify(n, type) {
-    if ((type.definition.category === "int" || type.definition.category === "uint") && type.definition.size === 8)
-      return BigInt(n);
-    return n;
-  }
-  function cloneArrayBuffer(buf) {
-    const dst = new ArrayBuffer(buf.byteLength);
-    new Uint8Array(dst).set(new Uint8Array(buf));
-    return dst;
-  }
-  var ExecutionContext = class _ExecutionContext {
-    constructor(opts, prev, executor) {
-      this.stack = opts.stack.slice();
-      this.memory = cloneArrayBuffer(opts.memory);
-      this.littleEndian = opts.littleEndian;
-      this.view = new DataView(this.memory);
-      this.prev = prev;
-      this.types = new Map(opts.types);
-      this.esp = opts.esp;
-      this.stdout = opts.stdout;
-      if (this.prev)
-        this.prev.next = this;
-    }
-    getvar(name2) {
-      return this.stacktop().bindings.get(name2) ?? this.stack[0].bindings.get(name2);
-    }
-    clone(executor) {
-      return new _ExecutionContext({
-        memory: this.memory,
-        littleEndian: this.littleEndian,
-        stack: this.stack,
-        esp: this.esp,
-        types: this.types,
-        stdout: this.stdout
-      }, this, executor);
-    }
-    sizeof(type) {
-      if (type.pointers > 0)
-        return 4;
-      if (type.definition.category === "struct") {
-        return type.definition.fields.reduce((prev, field) => prev + this.sizeof(field[1]), 0);
-      }
-      return type.definition.size;
-    }
-    _setStruct(instance, value) {
-      const mem = new Uint8Array(this.memory.slice(instance.offset));
-      const valAsUint8array = new Uint8Array(value);
-      const size = this.sizeof(instance.type);
-      for (let i = 0; i < size; i++) {
-        mem[i] = valAsUint8array[i];
-      }
-    }
-    _getStruct(instance) {
-      return this.memory.slice(instance.offset, instance.offset + this.sizeof(instance.type));
-    }
-    setVar(instance, value) {
-      if (instance.type.definition.category === "struct")
-        return this._setStruct(instance, value);
-      const typecode = instance.type.definition.category + instance.type.definition.size;
-      const useBigInt = typecode === "int8" || typecode === "uint8";
-      const setterFn = instance.type.pointers > 0 ? this.view.setUint32 : {
-        int1: this.view.setInt8,
-        int2: this.view.setInt16,
-        int4: this.view.setInt32,
-        int8: this.view.setBigInt64,
-        uint1: this.view.setUint8,
-        uint2: this.view.setUint16,
-        uint4: this.view.setUint32,
-        uint8: this.view.setBigUint64,
-        float4: this.view.setFloat32,
-        float8: this.view.setFloat64
-      }[typecode];
-      assert(setterFn, `setterFn exists (typecode ${typecode})`);
-      return setterFn?.apply(this.view, [
-        instance.offset,
-        // @ts-expect-error no thank you
-        useBigInt ? BigInt(value) : Number(value),
-        this.littleEndian
-      ]);
-    }
-    getVar(instance) {
-      if (instance.type.definition.category === "struct")
-        return this._getStruct(instance);
-      const getterFn = instance.type.pointers > 0 ? this.view.getUint32 : {
-        int1: this.view.getInt8,
-        int2: this.view.getInt16,
-        int4: this.view.getInt32,
-        int8: this.view.getBigInt64,
-        uint1: this.view.getUint8,
-        uint2: this.view.getUint16,
-        uint4: this.view.getUint32,
-        uint8: this.view.getBigUint64,
-        float4: this.view.getFloat32,
-        float8: this.view.getFloat64
-      }[instance.type.definition.category + instance.type.definition.size];
-      assert(getterFn, "getterFn exists");
-      return getterFn.apply(this.view, [instance.offset, this.littleEndian]);
-    }
-    _push(type, value, creator, doNotSetVar) {
-      const esp = this.esp;
-      if (type.definition.category === "struct" && type.pointers === 0) {
-        for (const [fieldname, fieldvalue] of type.definition.fields) {
-          this._push(fieldvalue, bigintify(0, fieldvalue), creator);
-        }
-        return {
-          type,
-          offset: esp,
-          creator
-        };
-      }
-      const varInstance = {
-        type,
-        offset: esp,
-        creator
-      };
-      this.esp += this.sizeof(type);
-      if (!doNotSetVar)
-        this.setVar(varInstance, value);
-      return varInstance;
-    }
-    stacktop() {
-      return this.stack[this.stack.length - 1];
-    }
-    blocktop() {
-      return this.stacktop().blocks[this.stacktop().blocks.length - 1];
-    }
-    pushAnonymous(type, value, creator) {
-      console.log("pushanon", creator);
-      const instance = this._push(type, value, creator);
-      this.stacktop().temporaries.push(instance);
-    }
-    pushNamed(type, value, name2, creator) {
-      const instance = this._push(type, value, creator);
-      const binding = {
-        ...instance,
-        name: name2
-      };
-      this.stacktop().bindings.set(name2, binding);
-      this.blocktop().bindings.set(name2, binding);
-    }
-    pushBlock() {
-      this.stacktop().blocks.push({
-        bindings: /* @__PURE__ */ new Map()
-      });
-    }
-    popBlock() {
-      const block = notNull(this.stacktop().blocks.pop(), "block", this);
-      for (const [name2, binding] of [...block.bindings].reverse()) {
-        this.esp -= this.sizeof(binding.type);
-        this.stacktop().bindings.delete(name2);
-      }
-    }
-    popTempValue() {
-      const val = notNull(this.stacktop().temporaries.pop(), "tempvalue in stack", this);
-      this.esp -= this.sizeof(val.type);
-      return val;
-    }
-    popTempValueAndGetData() {
-      const val = this.popTempValue();
-      return this.getVar(val);
-    }
-    popTempValueAndGetBoth() {
-      const val = this.popTempValue();
-      return {
-        value: this.getVar(val),
-        typeinfo: val
-      };
-    }
-    addFunctionDefinition(name2, node) {
-      this.stacktop().functionDefinitions.set(name2, {
-        def: node,
-        type: "internal"
-      });
-    }
-    getFunctionDefinition(name2) {
-      for (const frame of this.stack.slice().reverse()) {
-        const def = frame.functionDefinitions.get(name2);
-        if (def) {
-          return def;
-        }
-      }
-    }
-    popStackFrame() {
-      const top2 = this.stack.pop();
-      if (!top2)
-        throw new ExecutionError("Popping off of an empty stack!", this);
-      top2.freed = true;
-      this.esp = top2.base;
-      for (let i = 0; i < top2.argc; i++) {
-        this.popTempValue();
-      }
-      return top2;
-    }
-  };
-  var DefaultPrimitives = {
-    // integer types
-    long: {
-      size: 8,
-      category: "int",
-      name: "long"
-    },
-    int: {
-      size: 4,
-      category: "int",
-      name: "int"
-    },
-    short: {
-      size: 2,
-      category: "int",
-      name: "short"
-    },
-    char: {
-      size: 1,
-      category: "int",
-      name: "char"
-    },
-    // unsigned integer types
-    "unsigned long": {
-      size: 8,
-      category: "int",
-      name: "unsigned long"
-    },
-    "unsigned int": {
-      size: 4,
-      category: "int",
-      name: "unsigned int"
-    },
-    "unsigned short": {
-      size: 2,
-      category: "int",
-      name: "unsigned short"
-    },
-    "unsigned char": {
-      size: 1,
-      category: "int",
-      name: "unsigned char"
-    },
-    // floats
-    float: {
-      size: 4,
-      category: "float",
-      name: "float"
-    },
-    double: {
-      size: 8,
-      category: "float",
-      name: "double"
-    },
-    // bool
-    bool: {
-      size: 1,
-      category: "uint",
-      name: "bool"
-    }
-  };
-  var IntsBySize = {
-    1: DefaultPrimitives.char,
-    2: DefaultPrimitives.short,
-    4: DefaultPrimitives.int,
-    8: DefaultPrimitives.long
-  };
-  var UintsBySize = {
-    1: DefaultPrimitives["unsigned char"],
-    2: DefaultPrimitives["unsigned short"],
-    4: DefaultPrimitives["unsigned int"],
-    8: DefaultPrimitives["unsigned long"]
-  };
-  var FloatsBySize = {
-    4: DefaultPrimitives.float,
-    8: DefaultPrimitives.double
-  };
-  var DefaultTypes = new Map(Object.entries(DefaultPrimitives).map(([k, v]) => [k, {
-    ...v,
-    name: k
-  }]));
-  function execAndRetrieveData(ctx, expr) {
-    ctx = expr.exec(ctx);
-    return {
-      ctx,
-      data: ctx.popTempValueAndGetBoth()
-    };
-  }
-  function constructTypeFromNode(ctx, node) {
-    return {
-      definition: notNull(ctx.types.get(node.d.name), `Type '${node.d.name}' does not exist.`, ctx),
-      pointers: node.d.pointers
-    };
-  }
-
-  // src/typecheck.tsx
-  var TypecheckContext = class {
-    knownTypeNames = /* @__PURE__ */ new Map();
-    stack = [];
-    constructor(knownTypes, initFunctionTypes) {
-      this.knownTypeNames = knownTypes;
-      this.initFunctionTypes = initFunctionTypes;
-    }
-    getTypeFromName(node) {
-      const type = this.knownTypeNames.get(node.d.name);
-      if (type)
-        return {
-          success: true,
-          type: {
-            pointers: node.d.pointers,
-            definition: type
-          }
-        };
-      return {
-        success: false,
-        why: [{
-          node,
-          msg: `Type '${node.d.name}' does not exist.`
-        }]
-      };
-    }
-    getVariableType(node) {
-      const stacktop = this.stacktop();
-      const name2 = node.d.name;
-      for (const block of stacktop.blocks.slice().reverse()) {
-        const v2 = block.knownVariableTypes.get(name2);
-        if (v2)
-          return {
-            type: v2,
-            success: true
-          };
-      }
-      const v = this.stack[0].blocks[0].knownVariableTypes.get(name2);
-      if (v)
-        return {
-          type: v,
-          success: true
-        };
-      return {
-        success: false,
-        why: [{
-          node,
-          msg: `The variable '${node.d.name}' does not exist.`
-        }]
-      };
-    }
-    getFunctionTypes(name2, node) {
-      const v = this.stack[0].knownFunctionTypes.get(name2);
-      if (v)
-        return {
-          success: true,
-          ...v
-        };
-      return {
-        success: false,
-        why: [{
-          node,
-          msg: `The function '${name2}' does not exist.`
-        }]
-      };
-    }
-    stacktop() {
-      return this.stack[this.stack.length - 1];
-    }
-    blocktop() {
-      return this.stacktop().blocks[this.stacktop().blocks.length - 1];
-    }
-    withBlock(cb) {
-      this.stacktop().blocks.push({
-        knownVariableTypes: /* @__PURE__ */ new Map()
-      });
-      cb();
-      this.stacktop().blocks.pop();
-    }
-    withStackFrame(cb) {
-      this.stack.push({
-        blocks: [{
-          knownVariableTypes: /* @__PURE__ */ new Map()
-        }],
-        knownFunctionTypes: this.stack.length == 0 ? this.initFunctionTypes : /* @__PURE__ */ new Map()
-      });
-      cb();
-      this.stack.pop();
-    }
-    defineVariable(name2, type) {
-      this.blocktop().knownVariableTypes.set(name2, type);
-    }
-    defineFunction(name2, returnType, argtypes) {
-      this.stack[0].knownFunctionTypes.set(name2, {
-        returns: returnType,
-        args: argtypes
-      });
-    }
-  };
-  function typeErr(node, ...msgs) {
-    return {
-      success: false,
-      why: msgs.map((msg) => ({
-        node,
-        msg
-      }))
-    };
-  }
-  function typeSuccess(type) {
-    return {
-      success: true,
-      type
-    };
-  }
-  function organizeTypeErrors(typeerrors) {
-    const errs = typeerrors.filter((t2) => !t2.success);
-    const successes = typeerrors.filter((t2) => t2.success).map((t2) => t2.type);
-    if (errs.length === 0)
-      return [void 0, successes];
-    return [{
-      success: false,
-      why: errs.map((err) => {
-        if (err.success)
-          return [];
-        return err.why;
-      }).flat(1)
-    }, successes];
-  }
-  function isStruct(type) {
-    return type.definition.category === "struct" && type.pointers === 0;
-  }
-  function isPointer(type) {
-    return type.pointers > 0;
-  }
-  function isFloat(type) {
-    return type.definition.category === "float" && type.pointers === 0;
-  }
-  function typeToString(type) {
-    let basename = type.definition.name;
-    if (type.definition.category === "struct")
-      basename = "struct " + basename;
-    return basename + " " + "".padStart(type.pointers, "*");
-  }
-  function combineTypesForArithmetic(node, a, b, op) {
-    const aPointer = isPointer(a);
-    const bPointer = isPointer(b);
-    if (aPointer && bPointer)
-      return typeErr(node, "Cannot do arithmetic between a pointer and a pointer.");
-    if (a.definition.category === "struct" || b.definition.category === "struct")
-      return typeErr(node, "Cannot do arithmetic on structs.");
-    if (aPointer || bPointer) {
-      if (op !== "+" && op !== "-")
-        return typeErr(node, `Cannot do the '${op}' operation with a pointer.`);
-    }
-    const biggestSize = Math.max(a.definition.size, b.definition.size);
-    const switchToFloat = a.definition.category === "float" || b.definition.category === "float";
-    const switchToSigned = a.definition.category === "int" || b.definition.category === "int";
-    if (switchToFloat) {
-      return typeSuccess({
-        definition: FloatsBySize[biggestSize],
-        pointers: 0
-      });
-    }
-    if (switchToSigned) {
-      return typeSuccess({
-        definition: IntsBySize[biggestSize],
-        pointers: 0
-      });
-    }
-    return typeSuccess(a.definition.size === biggestSize ? a : b);
-  }
-  function combineTypesForComparisonAndLogical(node, a, b, op) {
-    if (op !== "!=" && op !== "==" && isStruct(a) || isStruct(b))
-      return typeErr(node, `Cannot use the '${op}' operator on structs.`);
-    return typeSuccess({
-      definition: DefaultPrimitives.char,
-      pointers: 0
-    });
-  }
-  function combineTypesForBitwise(node, a, b, op) {
-    if (isFloat(a) || isFloat(b))
-      return typeErr(node, `Cannot use the '${op}' operator on a floating-point value.`);
-    if (isPointer(a) || isPointer(b))
-      return typeErr(node, `Cannot use the '${op}' operator on pointers.`);
-    return combineTypesForArithmetic(node, a, b, "+");
-  }
-  function typecheckBinaryOperation(ctx, op, left, right, node) {
-    const mltype = left.type(ctx);
-    const mrtype = right.type(ctx);
-    const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
-    if (errs)
-      return errs;
-    switch (op) {
-      case "->":
-      case ".":
-        return typeErr(node, "This operation is currently not supported.");
-    }
-    switch (op) {
-      case "+":
-      case "-":
-      case "*":
-      case "/":
-      case "%":
-        return combineTypesForArithmetic(node, ltype, rtype, op);
-      case "!=":
-      case "==":
-      case "<=":
-      case ">":
-      case ">=":
-      case "<":
-      case "&&":
-      case "^^":
-      case "||":
-        return combineTypesForComparisonAndLogical(node, ltype, rtype, op);
-      case "&":
-      case "^":
-      case "|":
-      case "<<":
-      case ">>":
-        return combineTypesForBitwise(node, ltype, rtype, op);
-    }
-  }
-  function pointerTo(type) {
-    return {
-      definition: type.definition,
-      pointers: type.pointers + 1
-    };
-  }
-  function dereference(type) {
-    return {
-      definition: type.definition,
-      pointers: type.pointers - 1
-    };
-  }
-  function typecheckUnaryOperation(ctx, op, value, node) {
-    const mtype = value.type(ctx);
-    const [errs, [type]] = organizeTypeErrors([mtype]);
-    if (errs)
-      return errs;
-    if (op === "*") {
-      if (!isPointer(type))
-        return typeErr(node, `The '*' operator can only be applied to a pointer type, as it represents the dereferencing of a pointer.`);
-      return typeSuccess(dereference(type));
-    } else if (op === "!") {
-      if (isStruct(type))
-        return typeErr(node, `The '!' operator cannot be applied to a struct type.`);
-      return typeSuccess({
-        definition: DefaultPrimitives.char,
-        pointers: 0
-      });
-    } else if (op === "~") {
-      if (isFloat(type))
-        return typeErr(node, `The '~' operator cannot be applied to a floating point type.`);
-      if (isStruct(type))
-        return typeErr(node, `The '~' operator cannot be applied to a struct type.`);
-      return typeSuccess(type);
-    }
-    const lv = value.typeLValue(ctx);
-    const [errs2, [lvalueType]] = organizeTypeErrors([lv]);
-    if (errs2)
-      return errs2;
-    return typeSuccess(pointerTo(lvalueType));
-  }
-  var getLineAndCol = (str, index) => {
-    const line = 1 + (str.slice(0, index).match(/\n/g)?.length ?? 0);
-    const col = str.slice(0, index).match(/(\n|^).*$/)?.[0]?.length ?? 1;
-    return {
-      line,
-      col
-    };
-  };
-  function formatDiagnostic(diag) {
-    const {
-      line,
-      col
-    } = getLineAndCol(diag.node.start.text(), diag.node.start.position());
-    return `${diag.msg}
-    at '${diag.node.text()}' (${line}:${col})`;
-  }
-
-  // src/parser-utils.tsx
-  function matchOnString(matcher, str) {
-    if (typeof matcher === "string") {
-      return str.startsWith(matcher) ? matcher : void 0;
-    } else if (Array.isArray(matcher)) {
-      for (const matchStr of matcher) {
-        const match = matchOnString(matchStr, str);
-        if (match)
-          return match;
-      }
-      return void 0;
-    } else if (matcher instanceof RegExp) {
-      const match = matcher.exec(str);
-      if (!match)
-        return void 0;
-      if (match.index === 0)
-        return match[0];
-    }
-  }
-  var ParseInput = class _ParseInput {
-    // syntax highlights are stored in a linked list to avoid backtracking problems
-    // while avoiding excess memory use
-    end() {
-      return this.pos >= this.src.length;
-    }
-    highlights() {
-      let hl = this._highlights;
-      let highlights = [];
-      while (hl) {
-        highlights.push(hl);
-        hl = hl.lastRange;
-      }
-      return highlights.reverse();
-    }
-    text() {
-      return this.src;
-    }
-    position() {
-      return this.pos;
-    }
-    slice() {
-      return this.src.slice(this.pos);
-    }
-    constructor(src, position, bindingPower, highlights) {
-      this.src = src;
-      this.bp = bindingPower;
-      this.pos = position;
-      this._highlights = highlights;
-    }
-    isNext(matcher) {
-      const skipmatch = matchOnString(skipRegex, this.slice());
-      const strmatch = matchOnString(matcher, this.slice().slice(skipmatch?.length ?? 0));
-      if (!strmatch)
-        return void 0;
-      return strmatch;
-    }
-    expect(matcher, highlight) {
-      const skipmatch = matchOnString(skipRegex, this.slice());
-      const strmatch = matchOnString(matcher, this.slice().slice(skipmatch?.length ?? 0));
-      if (!strmatch)
-        return [void 0, this];
-      const len = strmatch.length + (skipmatch?.length ?? 0);
-      this._highlights = {
-        highlight,
-        start: this.pos,
-        end: this.pos + len,
-        lastRange: this._highlights
-      };
-      return [strmatch, new _ParseInput(this.src, this.pos + len, this.bindingPower(), this._highlights)];
-    }
-    match(branches, fallback) {
-      for (const b of branches) {
-        const result = this.expect(b[0], b[1]);
-        if (!result[0])
-          continue;
-        return b[2](result[0], result[1]);
-      }
-      return fallback(this);
-    }
-    err(start, msg) {
-      return [new ErrorNode(start, this, {
-        msg
-      }), this];
-    }
-    bindingPower() {
-      return this.bp;
-    }
-    setBindingPower(bp) {
-      return new _ParseInput(this.src, this.pos, bp, this._highlights);
-    }
-    mut() {
-      return new MutableParseInput(this);
-    }
-  };
-  var MutableParseInput = class {
-    constructor(src) {
-      this.src = src;
-    }
-    end() {
-      return this.src.end();
-    }
-    highlights() {
-      return this.src.highlights();
-    }
-    text() {
-      return this.src.text();
-    }
-    position() {
-      return this.src.position();
-    }
-    isNext(matcher) {
-      return this.src.isNext(matcher);
-    }
-    expect(matcher, highlight) {
-      const [result, src] = this.src.expect(matcher, highlight);
-      this.src = src;
-      return result;
-    }
-    match(branches, fallback) {
-      const [result, src] = this.src.match(branches.map((b) => [b[0], b[1], (str, src2) => {
-        this.src = src2;
-        return [b[2](str), this.src];
-      }]), (src2) => {
-        this.src = src2;
-        return [fallback(), this.src];
-      });
-      this.src = src;
-      return result;
-    }
-    err(start, msg) {
-      const [result, src] = this.src.err(start, msg);
-      this.src = src;
-      return result;
-    }
-    bindingPower() {
-      return this.src.bindingPower();
-    }
-    setBindingPower(bp) {
-      this.src = this.src.setBindingPower(bp);
-    }
-    current() {
-      return this.src;
-    }
-    parse(nodetype, bindingPower) {
-      const node = nodetype(this.src.setBindingPower(bindingPower));
-      this.src = node.end;
-      return node;
-    }
-  };
-  var ParseNode = class {
-    constructor(start, end, d) {
-      this.d = d;
-      this.start = start;
-      this.end = end;
-    }
-    check(ctx) {
-      const errors = [...this.checkInner(ctx)].flat();
-      return errors.filter((e) => e);
-    }
-    map(callback) {
-      callback(this);
-      this.mapInner(callback);
-    }
-    // lvalues are treated as pointers to whatever they're being assigned to
-    execLValue(ctx) {
-      throw new ExecutionError(`This expression cannot be used as an lvalue.`, ctx);
-    }
-    setBindingPower(bp) {
-      return new this.constructor(this.start, this.end.setBindingPower(bp), this.d);
-    }
-    setParserPointer(pp) {
-      this.end = pp;
-      return this;
-    }
-    typeLValue(ctx) {
-      return typeErr(this, "This cannot be used as an lvalue (thing that can be assigned to).");
-    }
-    checkLValue(ctx) {
-      const result = this.typeLValue(ctx);
-      if (result.success)
-        return [];
-      return result.why;
-    }
-    text() {
-      return this.start.text().slice(this.start.position(), this.end.position());
-    }
-  };
-  function requiresSemicolon(stmt) {
-    return !(stmt instanceof IfNode || stmt instanceof FunctionDefNode || stmt instanceof StructDefinitionNode || stmt instanceof LoopNode);
-  }
-  var BindingPowers = {
-    // logical
-    "||": 40,
-    "^^": 50,
-    "&&": 60,
-    // bitwise
-    "|": 70,
-    "^": 80,
-    "&": 90,
-    // comparison
-    "==": 100,
-    "!=": 100,
-    ">=": 110,
-    "<=": 110,
-    ">": 110,
-    "<": 110,
-    // bitshift
-    ">>": 120,
-    "<<": 120,
-    // arithmetic
-    "+": 130,
-    "-": 130,
-    "*": 140,
-    "/": 140,
-    "%": 140,
-    // member access
-    ".": 160,
-    "->": 160
-  };
-  var UnaryBindingPowers = {
-    // unaries
-    "*": 150,
-    "&": 150,
-    "~": 150,
-    "!": 150
-  };
-  function seek(start, muts, matcher, highlight, err) {
-    let i = 0;
-    while (!muts.end() && !muts.isNext(matcher)) {
-      muts.expect(/[\s\S]/, "operator");
-      i++;
-      if (i > 1e4) {
-        console.log("ASDASD", i, muts);
-        break;
-      }
-    }
-    if (!muts.expect(matcher, highlight))
-      return muts.err(start, err);
-  }
-
-  // src/nodes/BinaryOpNode.tsx
-  function handleBinaryOperation(ctx, op, node) {
-    const right = ctx.popTempValueAndGetBoth();
-    const left = ctx.popTempValueAndGetBoth();
-    let lv = left.value;
-    let rv = right.value;
-    switch (op) {
-      case "->":
-      case ".":
-        return ctx;
-    }
-    if (lv instanceof ArrayBuffer || rv instanceof ArrayBuffer) {
-      throw new ExecutionError("Cannot do this operation between structs", ctx);
-    }
-    if (left.typeinfo.type.definition.category === "float" || right.typeinfo.type.definition.category === "float") {
-      lv = Number(lv);
-      rv = Number(rv);
-    } else {
-      lv = BigInt(lv);
-      rv = BigInt(rv);
-    }
-    let output2;
-    let outputType = left.typeinfo.type;
-    if ((op === "+" || op === "-") && (left.typeinfo.type.pointers > 0 || right.typeinfo.type.pointers > 0)) {
-      rv = Number(rv);
-      lv = Number(lv);
-      const leftIsPtr = left.typeinfo.type.pointers > 0;
-      if (op === "-") {
-        rv *= -1;
-      }
-      const ptrVal = leftIsPtr ? lv : rv;
-      const nonPtrVal = leftIsPtr ? rv : lv;
-      const ptrType = leftIsPtr ? left.typeinfo : right.typeinfo;
-      const nonPtrType = leftIsPtr ? right.typeinfo : left.typeinfo;
-      output2 = ptrVal + nonPtrVal * ctx.sizeof({
-        definition: ptrType.type.definition,
-        pointers: ptrType.type.pointers - 1
-      });
-      outputType = ptrType.type;
-      ctx.pushAnonymous(outputType, output2, node);
-      return ctx;
-    }
-    switch (op) {
-      case "+":
-      case "-":
-      case "*":
-      case "/":
-      case "%":
-        output2 = {
-          "+": (a, b) => a + b,
-          "-": (a, b) => a - b,
-          "*": (a, b) => a * b,
-          "/": (a, b) => a / b,
-          "%": (a, b) => a % b
-        }[op](lv, rv);
-        break;
-      case "!=":
-      case "==":
-      case "<=":
-      case ">":
-      case ">=":
-      case "<":
-      case "&&":
-      case "^^":
-      case "||":
-        output2 = Number({
-          "==": (a, b) => a == b,
-          "!=": (a, b) => a != b,
-          ">=": (a, b) => a >= b,
-          ">": (a, b) => a > b,
-          "<=": (a, b) => a <= b,
-          "<": (a, b) => a < b
-        }[op](lv, rv));
-        break;
-      case "&":
-      case "^":
-      case "|":
-      case "<<":
-      case ">>":
-        output2 = {
-          "&": (a, b) => a & b,
-          "^": (a, b) => a ^ b,
-          "|": (a, b) => a | b,
-          ">>": (a, b) => a >> b,
-          "<<": (a, b) => a << b
-        }[op](lv, rv);
-        break;
-    }
-    if (output2 !== void 0) {
-      ctx.pushAnonymous(outputType, output2, node);
-    }
-    return ctx;
-  }
-  var BinaryOpNode = class extends ParseNode {
-    debug() {
-      return `(${this.d.op} ${this.d.left.debug()} ${this.d.right.debug()})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = this.d.left.exec(ctx);
-      ctx = this.d.right.exec(ctx);
-      ctx = handleBinaryOperation(ctx, this.d.op, this);
-      return ctx;
-    }
-    // TODO: Implement lvalues here later
-    mapInner(cb) {
-      automap(this.d.left, cb);
-      automap(this.d.right, cb);
-    }
-    type(ctx) {
-      return typecheckBinaryOperation(ctx, this.d.op, this.d.left, this.d.right, this);
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-  };
-
-  // src/nodes/AssignmentNode.tsx
-  var AssignmentNode = class extends ParseNode {
-    debug() {
-      return `(${this.d.op ?? ""}= ${this.d.left.debug()} ${this.d.right.debug()})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = this.d.left.execLValue(ctx);
-      if (this.d.op) {
-        ctx = this.d.left.exec(ctx);
-      }
-      ctx = this.d.right.exec(ctx);
-      if (this.d.op) {
-        handleBinaryOperation(ctx, this.d.op, this);
-      }
-      const right = ctx.popTempValueAndGetBoth();
-      const left = ctx.popTempValueAndGetBoth();
-      ctx.setVar({
-        type: right.typeinfo.type,
-        offset: left.value,
-        creator: this
-      }, right.value);
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.left, cb);
-      automap(this.d.right, cb);
-    }
-    *checkInner(ctx) {
-      const mltype = this.d.left.typeLValue(ctx);
-      const mrtype = this.d.right.type(ctx);
-      const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
-      yield errs?.why;
-    }
-  };
-
-  // src/nodes/ErrorNode.tsx
-  var ErrorNode = class extends ParseNode {
-    debug() {
-      return `(#ERROR# '${this.d.msg}')`;
-    }
-    exec(ctx) {
-      throw new ExecutionError(`Parse Error: ${this.d.msg}`, ctx);
-      return ctx;
-    }
-    mapInner(cb) {
-    }
-    type(ctx) {
-      return {
-        success: false,
-        why: [{
-          node: this,
-          msg: this.d.msg
-        }]
-      };
-    }
-    *checkInner(ctx) {
-      console.log("got here!", defaultExprCheck(this, ctx));
-      yield defaultExprCheck(this, ctx);
-    }
-    checkLValue(ctx) {
-      return [...defaultExprCheck(this, ctx)];
-    }
-  };
-
-  // src/nodes/FunctionCallNode.tsx
-  var FunctionCallNode = class extends ParseNode {
-    debug() {
-      return `(${this.d.name} ${this.d.args.map((arg) => arg.debug()).join(" ")})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      for (const arg of this.d.args) {
-        ctx = arg.exec(ctx);
-      }
-      const fndef = ctx.getFunctionDefinition(this.d.name);
-      if (!fndef) {
-        console.log(ctx);
-        throw new ExecutionError(`Function '${fndef}' does not exist.`, ctx);
-      }
-      if (fndef.type === "internal") {
-        ctx = fndef.def.call(ctx);
-      } else {
-        ctx = fndef.def(ctx, this);
-      }
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.args, cb);
-    }
-    type(ctx) {
-      const functionTypeSig = ctx.getFunctionTypes(this.d.name, this);
-      if (functionTypeSig.success === false)
-        return functionTypeSig;
-      if (functionTypeSig.args.length !== this.d.args.length)
-        return {
-          success: false,
-          why: [{
-            node: this,
-            msg: `The function '${this.d.name}' takes ${functionTypeSig.args.length} arguments, but you supplied ${this.d.args.length} arguments.`
-          }]
-        };
-      const maybeArgTypes = this.d.args.map((arg) => arg.type(ctx));
-      const [errs, argTypes] = organizeTypeErrors(maybeArgTypes);
-      if (errs)
-        return errs;
-      const badargs = [];
-      console.log("fnname", this.d.name, "argtypes", argTypes, "typesig", functionTypeSig.args);
-      for (let i = 0; i < functionTypeSig.args.length; i++) {
-        if (!isStruct(argTypes[i]) && !isStruct(functionTypeSig.args[i]))
-          continue;
-        if (argTypes[i].definition !== functionTypeSig[i].definition)
-          badargs.push(`Argument ${i + 1} should be of type '${typeToString(argTypes[i])}', but you put '${typeToString(functionTypeSig[i])}'.`);
-      }
-      return {
-        type: functionTypeSig.returns,
-        success: true
-      };
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-  };
-
-  // src/nodes/FunctionDefNode.tsx
-  var FunctionDefNode = class extends ParseNode {
-    debug() {
-      return `(fndef ${this.d.args.map((arg) => `(${arg.debug()})`).join(" ")} ${this.d.body.map((v) => v.debug()).join(" ")})`;
-    }
-    exec(ctx) {
-      ctx.addFunctionDefinition(this.d.returnTypeAndName.d.name, this);
-      return ctx;
-    }
-    call(ctx) {
-      ctx = ctx.clone(this);
-      const ret = ctx.types.get(this.d.returnTypeAndName.d.type.d.name);
-      if (!ret)
-        throw new ExecutionError(`Return type '${this.d.returnTypeAndName.d.type.d.name}' does not exist.`, ctx);
-      const frame = {
-        base: ctx.esp,
-        bindings: /* @__PURE__ */ new Map(),
-        temporaries: [],
-        functionDefinitions: /* @__PURE__ */ new Map(),
-        freed: false,
-        returnType: {
-          definition: ret,
-          pointers: this.d.returnTypeAndName.d.type.d.pointers
-        },
-        argc: this.d.args.length,
-        blocks: [{
-          bindings: /* @__PURE__ */ new Map()
-        }]
-      };
-      let offset = 0;
-      for (const arg of this.d.args.slice().reverse()) {
-        const type = ctx.types.get(arg.d.type.d.name);
-        if (!type)
-          throw new ExecutionError(`Error with argument '${arg.d.name}': Type '${arg.d.type.d.name}' does not exist.`, ctx);
-        const fnargType = {
-          definition: type,
-          pointers: arg.d.type.d.pointers
-        };
-        offset += ctx.sizeof(fnargType);
-        frame.bindings.set(arg.d.name, {
-          offset: ctx.esp - offset,
-          type: fnargType,
-          name: arg.d.name,
-          creator: this
-        });
-      }
-      ctx.stack.push(frame);
-      ctx = handleStatementList(ctx, this.d.body).ctx;
-      if (!frame.freed) {
-        ctx = ctx.clone(this);
-        ctx.popStackFrame();
-      }
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.args, cb);
-      automap(this.d.returnTypeAndName, cb);
-      automap(this.d.body, cb);
-    }
-    *checkInner(ctx) {
-      const checks = [];
-      ctx.withStackFrame(() => {
-        for (const stmt of this.d.args)
-          checks.push(...stmt.check(ctx));
-        const argtypes = [];
-        for (const arg of this.d.args) {
-          const mt = ctx.getTypeFromName(arg.d.type);
-          const [errs2, [t2]] = organizeTypeErrors([mt]);
-          if (errs2) {
-            checks.push(...errs2.why);
-            continue;
-          }
-          ctx.defineVariable(arg.d.name, t2);
-          argtypes.push(t2);
-        }
-        const mrettype = ctx.getTypeFromName(this.d.returnTypeAndName.d.type);
-        const [errs, [rettype]] = organizeTypeErrors([mrettype]);
-        if (errs) {
-          checks.push(...errs.why);
-        } else {
-          ctx.defineFunction(this.d.returnTypeAndName.d.name, rettype, argtypes);
-        }
-      });
-      yield checks;
-    }
-  };
-
-  // src/nodes/IdentifierNode.tsx
-  var IdentifierNode = class extends ParseNode {
-    debug() {
-      return this.d.name;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      const data = ctx.getvar(this.d.name);
-      if (!data) {
-        throw new ExecutionError(`Identifier '${this.d.name}' does not exist.`, ctx);
-      }
-      ctx.pushAnonymous(data.type, ctx.getVar(data), this);
-      return ctx;
-    }
-    execLValue(ctx) {
-      ctx = ctx.clone(this);
-      const data = ctx.getvar(this.d.name);
-      if (!data) {
-        throw new ExecutionError(`Identifier '${this.d.name}' does not exist.`, ctx);
-      }
-      ctx.pushAnonymous({
-        definition: data.type.definition,
-        pointers: data.type.pointers + 1
-      }, data.offset, this);
-      return ctx;
-    }
-    mapInner() {
-    }
-    type(ctx) {
-      return ctx.getVariableType(this);
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-    typeLValue(ctx) {
-      return ctx.getVariableType(this);
-    }
-  };
-
-  // src/nodes/IfNode.tsx
-  var IfNode = class extends ParseNode {
-    debug() {
-      return `(if ${this.d.condition.debug()} (${autodebug(this.d.body)}) ${this.d.elseif ? `else ${autodebug(this.d.elseif)}` : ""})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = this.d.condition.exec(ctx);
-      const top2 = ctx.popTempValueAndGetData();
-      if (top2 == 0) {
-        ctx = this.d.elseif?.exec(ctx) ?? ctx;
-      } else {
-        ctx = handleStatementList(ctx, this.d.body).ctx;
-      }
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.condition, cb);
-      automap(this.d.body, cb);
-      automap(this.d.elseif, cb);
-    }
-    *checkInner(ctx) {
-      yield this.d.condition.check(ctx);
-      const checks = [];
-      ctx.withBlock(() => {
-        for (const stmt of this.d.body)
-          checks.push(...stmt.check(ctx));
-      });
-      yield checks;
-      yield this.d.elseif?.check(ctx);
-    }
-  };
-
-  // src/nodes/LoopNode.tsx
-  var LoopNode = class extends ParseNode {
-    debug() {
-      if (this.d.conditions.type === "for") {
-        return `(for (${autodebug(this.d.conditions.start)} ${autodebug(this.d.conditions.condition)} ${autodebug(this.d.conditions.iter)}) ${autodebug(this.d.body)})`;
-      } else {
-        return `(while ${this.d.conditions.condition.debug()} ${autodebug(this.d.body)})`;
-      }
-    }
-    // TODO: deal with stack misalignment from statements that contain expressions but don't do anything with them
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      const stacktop = ctx.stacktop();
-      const end = () => {
-        ctx.popBlock();
-        return ctx;
-      };
-      if (this.d.conditions.type === "while") {
-        ctx.pushBlock();
-        while (true) {
-          ctx = this.d.conditions.condition.exec(ctx);
-          const cond = ctx.popTempValueAndGetBoth();
-          if (cond.value == 0) {
-            break;
-          }
-          const list = handleStatementList(ctx, this.d.body);
-          ctx = list.ctx;
-          if (list.returned)
-            return ctx;
-        }
-      } else {
-        ctx = this.d.conditions.start?.exec(ctx) ?? ctx;
-        if (stacktop.freed)
-          return ctx;
-        while (true) {
-          ctx = this.d.conditions.condition?.exec(ctx) ?? ctx;
-          if (stacktop.freed)
-            return ctx;
-          const cond = this.d.conditions.condition ? ctx.popTempValueAndGetBoth() : void 0;
-          if (cond && cond.value == 0)
-            break;
-          const list = handleStatementList(ctx, this.d.body);
-          ctx = list.ctx;
-          if (list.returned)
-            return ctx;
-          ctx = this.d.conditions.iter?.exec(ctx) ?? ctx;
-          if (stacktop.freed)
-            return ctx;
-        }
-      }
-      return end();
-    }
-    mapInner(cb) {
-      automap(this.d.body, cb);
-      if (this.d.conditions.type === "while") {
-        automap(this.d.conditions.condition, cb);
-      } else {
-        automap(this.d.conditions.condition, cb);
-        automap(this.d.conditions.iter, cb);
-        automap(this.d.conditions.start, cb);
-      }
-    }
-    // TODO: add thing for making sure conditions are valid
-    *checkInner(ctx) {
-      const checks = [];
-      if (this.d.conditions.type === "while") {
-        ctx.withBlock(() => {
-          checks.push(...this.d.conditions.condition?.check(ctx) ?? []);
-          checks.push(...this.d.body.map((b) => b.check(ctx)).flat(1));
-        });
-      } else {
-        ctx.withBlock(() => {
-          if (this.d.conditions.type === "while")
-            return;
-          checks.push(...this.d.conditions.start?.check(ctx) ?? []);
-          checks.push(...this.d.conditions.condition?.check(ctx) ?? []);
-          checks.push(...this.d.conditions.iter?.check(ctx) ?? []);
-          ctx.withBlock(() => {
-            checks.push(...this.d.body.map((b) => b.check(ctx)).flat(1));
-          });
-        });
-      }
-      yield checks;
-    }
-  };
-
-  // src/nodes/NumberNode.tsx
-  var NumberNode = class extends ParseNode {
-    debug() {
-      return this.d.num.toString();
-    }
-    determineNumericType() {
-      const bytes = this.d.bytes ?? (this.d.type === "f" ? 8 : 4);
-      switch (this.d.type) {
-        case "f":
-          return {
-            definition: FloatsBySize[bytes],
-            pointers: 0
-          };
-        case "u":
-          return {
-            definition: UintsBySize[bytes],
-            pointers: 0
-          };
-        case "i":
-        default:
-          return {
-            definition: IntsBySize[bytes],
-            pointers: 0
-          };
-      }
-    }
-    exec(ctx) {
-      const ctx2 = ctx.clone(this);
-      ctx2.pushAnonymous(this.determineNumericType(), this.d.num, this);
-      return ctx2;
-    }
-    mapInner() {
-    }
-    type(ctx) {
-      return {
-        success: true,
-        type: this.determineNumericType()
-      };
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-  };
-
-  // src/nodes/ReturnStatementNode.tsx
-  var ReturnStatementNode = class extends ParseNode {
-    debug() {
-      return `(return ${autodebug(this.d.expr)})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = this.d.expr?.exec(ctx) ?? ctx;
-      let outputValue = 0;
-      if (this.d.expr) {
-        const output2 = ctx.popTempValueAndGetBoth();
-        outputValue = output2.value;
-      }
-      const frame = ctx.popStackFrame();
-      ctx.pushAnonymous(frame.returnType, outputValue, this);
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.expr, cb);
-    }
-    // TODO: statically ensure that return type matches enclosing function type
-    *checkInner(ctx) {
-      if (this.d.expr)
-        yield this.d.expr.check(ctx);
-    }
-  };
-
-  // src/nodes/StatementListNode.tsx
-  var StatementListNode = class extends ParseNode {
-    debug() {
-      return this.d.body.map((s) => s.debug()).join("\n");
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = handleStatementList(ctx, this.d.body).ctx;
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.body, cb);
-    }
-    *checkInner(ctx) {
-      const checks = [];
-      ctx.withStackFrame(() => {
-        for (const stmt of this.d.body)
-          checks.push(...stmt.check(ctx));
-      });
-      yield checks;
-    }
-  };
-
-  // src/nodes/StringLiteralNode.tsx
-  var StringLiteralNode = class extends ParseNode {
-    debug() {
-      return `${JSON.stringify(this.d.str)}`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx.pushAnonymous(this._type(), this.d.pointer, this);
-      return ctx;
-    }
-    mapInner(callback) {
-    }
-    _type() {
-      return {
-        definition: DefaultPrimitives.char,
-        pointers: 1
-      };
-    }
-    type(ctx) {
-      return typeSuccess(this._type());
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-  };
-
-  // src/nodes/StructDefinitionNode.tsx
-  var StructDefinitionNode = class extends ParseNode {
-    debug() {
-      return `(struct ${this.d.name} (${autodebug(this.d.fields)}))`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx.types.set(this.d.name, {
-        category: "struct",
-        name: this.d.name,
-        fields: this.d.fields.map((f) => {
-          const fieldtype = ctx.types.get(f.d.type.d.name);
-          if (!fieldtype)
-            throw new ExecutionError(`The struct field '${f.d.name}' has type '${f.d.type}', which does not exist.`, ctx);
-          return [f.d.name, {
-            definition: fieldtype,
-            pointers: f.d.type.d.pointers
-          }];
-        })
-      });
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.fields, cb);
-    }
-    *checkInner(ctx) {
-    }
-  };
-
-  // src/nodes/TypecastNode.tsx
-  var TypecastNode = class extends ParseNode {
-    debug() {
-      return `(cast ${this.d.value.debug()} to ${this.d.type.debug()})`;
-    }
-    exec(ctx) {
-      const data = execAndRetrieveData(ctx, this.d.value);
-      ctx = data.ctx;
-      const type = constructTypeFromNode(ctx, this.d.type);
-      ctx.pushAnonymous(type, data.data.value, this);
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.type, cb);
-      automap(this.d.value, cb);
-    }
-    type(ctx) {
-      const type = ctx.getTypeFromName(this.d.type);
-      return type;
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-  };
-
-  // src/nodes/UnaryOpNode.tsx
-  var UnaryOpNode = class extends ParseNode {
-    debug() {
-      return `(${this.d.op} ${this.d.value.debug()})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = this.d.op === "&" ? this.d.value.execLValue(ctx) : this.d.value.exec(ctx);
-      const value = ctx.popTempValueAndGetBoth();
-      let output2;
-      let outputType;
-      switch (this.d.op) {
-        case "!":
-          output2 = value.value == 0 ? 1 : 0;
-          outputType = DefaultPrimitives.bool;
-          break;
-        case "&":
-          output2 = value.value;
-          outputType = {
-            ...value.typeinfo.type,
-            pointers: value.typeinfo.type.pointers + 1
-          };
-          break;
-        case "*":
-          outputType = {
-            ...value.typeinfo.type,
-            pointers: value.typeinfo.type.pointers - 1
-          };
-          output2 = ctx.getVar({
-            offset: Number(value.value),
-            type: outputType,
-            creator: this
-          });
-          break;
-        case "~":
-          output2 = ~value.value;
-          outputType = value.typeinfo.type;
-          break;
-      }
-      ctx.pushAnonymous(outputType, output2, this);
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.value, cb);
-    }
-    type(ctx) {
-      return typecheckUnaryOperation(ctx, this.d.op, this.d.value, this);
-    }
-    *checkInner(ctx) {
-      yield defaultExprCheck(this, ctx);
-    }
-    typeLValue(ctx) {
-      if (this.d.op !== "*") {
-        return typeErr(this, `This expression cannot be an lvalue.`);
-      }
-      return typecheckUnaryOperation(ctx, this.d.op, this.d.value, this);
-    }
-  };
-
-  // src/nodes/VariableDefinitionNode.tsx
-  var VariableDefinitionNode = class extends ParseNode {
-    debug() {
-      return `(let ${this.d.definition.debug()} ${autodebug(this.d.value)})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      const typeOfThisVar = ctx.types.get(this.d.definition.d.type.d.name);
-      if (!typeOfThisVar)
-        throw new ExecutionError(`The type '${this.d.definition.d.type.d.name}' does not exist.`, ctx);
-      let value = 0;
-      if (this.d.value) {
-        ctx = this.d.value.exec(ctx);
-        const thingToAssign = ctx.popTempValueAndGetBoth();
-        value = thingToAssign.value;
-      }
-      ctx.pushNamed({
-        definition: typeOfThisVar,
-        pointers: this.d.definition.d.type.d.pointers
-      }, value, this.d.definition.d.name, this);
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.definition, cb);
-      automap(this.d.value, cb);
-    }
-    *checkInner(ctx) {
-      yield this.d.definition.check(ctx);
-      yield this.d.value?.check(ctx);
-      const [fail, [type]] = organizeTypeErrors([ctx.getTypeFromName(this.d.definition.d.type)]);
-      yield fail?.why;
-      ctx.defineVariable(this.d.definition.d.name, type);
-    }
-  };
-
-  // src/nodes/DefinitionNode.tsx
-  var DefinitionNode = class extends ParseNode {
-    debug() {
-      return `(${this.d.type.debug()} ${this.d.name})`;
-    }
-    exec(ctx) {
-      throw new Error("Type definitions should not be exec()ed.");
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.type, cb);
-    }
-    *checkInner(ctx) {
-      yield this.d.type.check(ctx);
-    }
-  };
-
-  // src/nodes/ElseNode.tsx
-  var ElseNode = class extends ParseNode {
-    debug() {
-      return `(${autodebug(this.d.body)})`;
-    }
-    exec(ctx) {
-      ctx = ctx.clone(this);
-      ctx = handleStatementList(ctx, this.d.body).ctx;
-      return ctx;
-    }
-    mapInner(cb) {
-      automap(this.d.body, cb);
-    }
-    *checkInner(ctx) {
-      const checks = [];
-      ctx.withBlock(() => {
-        for (const stmt of this.d.body)
-          checks.push(...stmt.check(ctx));
-      });
-      yield checks;
-    }
-  };
-
-  // src/nodes/TypeAnnotationNode.tsx
-  var TypeAnnotationNode = class extends ParseNode {
-    debug() {
-      return `${this.d.struct ? "struct " : ""}${this.d.name} ${"".padStart(this.d.pointers, "*")}`;
-    }
-    exec(ctx) {
-      throw new Error("Type annotations should not be exec()ed.");
-      return ctx;
-    }
-    mapInner() {
-    }
-    *checkInner(ctx) {
-    }
-  };
-
-  // src/ast.tsx
-  function autodebug(node) {
-    if (Array.isArray(node)) {
-      return node.map((n) => n.debug()).join(" ");
-    } else if (node) {
-      return node.debug();
-    }
-    return "";
-  }
-  function handleStatementList(ctx, body) {
-    const top2 = ctx.stacktop();
-    ctx.pushBlock();
-    for (const stmt of body) {
-      ctx = stmt.exec(ctx);
-      if (top2.freed) {
-        return {
-          returned: true,
-          ctx
-        };
-      }
-    }
-    ctx.popBlock();
-    return {
-      returned: false,
-      ctx
-    };
-  }
-  function defaultExprCheck(expr, ctx) {
-    const type = expr.type(ctx);
-    if (type.success === true)
-      return [];
-    return type.why;
-  }
-  var ExecutionError = class extends Error {
-    constructor(msg, ctx) {
-      super(msg);
-      this.ctx = ctx;
-    }
-  };
-  function automap(node, callback) {
-    if (Array.isArray(node)) {
-      node.map((n) => n.map(callback));
-    } else if (node instanceof ParseNode) {
-      node.map(callback);
-    }
-  }
-
-  // src/allocate.tsx
-  function concatArrayBuffers(a, b) {
-    const concatted = new ArrayBuffer(a.byteLength + b.byteLength);
-    const byteArray = new Uint8Array(concatted);
-    const byteArrayA = new Uint8Array(a);
-    const byteArrayB = new Uint8Array(b);
-    for (let i = 0; i < byteArrayA.length; i++) {
-      byteArray[i] = byteArrayA[i];
-    }
-    for (let i = 0; i < byteArrayB.length; i++) {
-      byteArray[i + byteArrayA.length] = byteArrayB[i];
-    }
-    return concatted;
-  }
-  function allocateStringLiterals(ast, ctx) {
-    function recurse(n) {
-      if (n instanceof StringLiteralNode) {
-        const strbuf = new TextEncoder().encode(n.d.str + "\0");
-        n.d.pointer = ctx.mem.byteLength;
-        ctx.mem = concatArrayBuffers(ctx.mem, strbuf);
-      }
-    }
-    ast.map(recurse);
-  }
-
-  // src/parser.tsx
-  function getBindingPowerOfNextToken(s) {
-    const str = s.isNext(opRegex);
-    if (!str)
-      return 0;
-    return BindingPowers[str] ?? 0;
-  }
-  function enclose(start, muts, end, endErr, highlightEnds, callback) {
-    const items = [];
-    while (!muts.isNext(end)) {
-      const item = callback(muts);
-      if (item instanceof ErrorNode)
-        return item;
-      items.push(item);
-    }
-    if (!muts.expect(end, highlightEnds))
-      return muts.err(start, endErr);
-    return items;
-  }
-  function parseTypeAnnotation(s) {
-    const muts = s.mut();
-    const struct = !!muts.expect("struct", "keyword");
-    const unsigned = struct ? void 0 : muts.expect("unsigned", "type");
-    let name2 = muts.expect(identRegex, "type");
-    if (!name2)
-      return muts.err(s, "Expected a type name.");
-    if (unsigned)
-      name2 = `unsigned ${name2}`;
-    let pointers = 0;
-    while (muts.isNext("*")) {
-      muts.expect("*", "operator");
-      pointers++;
-    }
-    return new TypeAnnotationNode(s, muts.current(), {
-      struct,
-      name: name2,
-      pointers
-    });
-  }
-  function parseDefinition(s) {
-    const muts = s.mut();
-    const type = muts.parse(parseTypeAnnotation, 0);
-    if (type instanceof ErrorNode)
-      return type;
-    const name2 = muts.expect(identRegex, "identifier");
-    if (!name2)
-      return muts.err(s, "Expected an identifier.");
-    return new DefinitionNode(s, muts.current(), {
-      type,
-      name: name2
-    });
-  }
-  function parseStatementList(s) {
-    const muts = s.mut();
-    const body = [];
-    while (true) {
-      const stmt = muts.parse(parseStatement, 0);
-      if (stmt instanceof ErrorNode)
-        break;
-      body.push(stmt);
-      if (requiresSemicolon(stmt) && !muts.expect(";", "semicolon"))
-        return muts.err(s, "Expected ';'");
-    }
-    return new StatementListNode(s, muts.current(), {
-      body
-    });
-  }
-  function getCondition(start, muts) {
-    if (!muts.expect("(", "bracket"))
-      return muts.err(start, "Expected '('");
-    const condition = muts.parse(parseExpr, 0);
-    if (!muts.expect(")", "bracket"))
-      return muts.err(start, "Expected ')'");
-    return condition;
-  }
-  function parseLoop(s) {
-    const muts = s.mut();
-    return muts.match([["for", "keyword", () => {
-      if (!muts.expect("(", "bracket"))
-        return muts.err(s, "Expected '('");
-      let start, iter;
-      let condition;
-      if (!muts.isNext(";")) {
-        start = muts.parse(parseStatement, 0);
-      }
-      if (!muts.expect(";", "semicolon"))
-        return muts.err(s, "Expected ';'");
-      if (!muts.isNext(";")) {
-        condition = muts.parse(parseExpr, 0);
-      }
-      if (!muts.expect(";", "semicolon"))
-        return muts.err(s, "Expected ';'");
-      if (!muts.isNext(")")) {
-        iter = muts.parse(parseStatement, 0);
-      }
-      if (!muts.expect(")", "bracket"))
-        return muts.err(s, "Expected ')'");
-      const body = parseCurlyBracesDelimitedBody(s, muts);
-      if (body instanceof ErrorNode)
-        return body;
-      return new LoopNode(s, muts.current(), {
-        body,
-        conditions: {
-          type: "for",
-          start,
-          condition,
-          iter
-        }
-      });
-    }], ["while", "keyword", () => {
-      const condition = getCondition(s, muts);
-      if (condition instanceof ErrorNode)
-        return condition;
-      const body = parseCurlyBracesDelimitedBody(s, muts);
-      if (body instanceof ErrorNode)
-        return body;
-      return new LoopNode(s, muts.current(), {
-        conditions: {
-          type: "while",
-          condition
-        },
-        body
-      });
-    }]], () => muts.err(s, "Expected 'for' or 'while'."));
-  }
-  function parseIfElseStatement(s) {
-    let muts = s.mut();
-    return muts.match([["if", "keyword", () => {
-      const condition = getCondition(s, muts);
-      if (condition instanceof ErrorNode)
-        return condition;
-      const body = parseCurlyBracesDelimitedBody(s, muts);
-      if (body instanceof ErrorNode)
-        return body;
-      let elseif;
-      if (muts.isNext("else")) {
-        elseif = muts.parse(parseIfElseStatement, 0);
-      }
-      return new IfNode(s, muts.current(), {
-        condition,
-        body,
-        elseif
-      });
-    }], ["else", "keyword", () => {
-      if (muts.isNext("if"))
-        return muts.parse(parseIfElseStatement, 0);
-      const body = parseCurlyBracesDelimitedBody(s, muts);
-      if (body instanceof ErrorNode)
-        return body;
-      return new ElseNode(s, muts.current(), {
-        body
-      });
-    }]], () => muts.err(s, "Expected 'if'."));
-  }
-  function parseCurlyBracesDelimitedBody(start, muts) {
-    if (!muts.expect("{", "bracket"))
-      return muts.err(start, "Expected '{'");
-    return enclose(start, muts, "}", "Expected '}'", "bracket", (muts2) => {
-      const stmt = muts2.parse(parseStatement, 0);
-      if (stmt instanceof ErrorNode)
-        return stmt;
-      if (requiresSemicolon(stmt) && !muts2.expect(";", "semicolon"))
-        return muts2.err(start, "Expected ';'");
-      return stmt;
-    });
-  }
-  function parseStatement(s) {
-    let muts = s.mut();
-    if (muts.expect("return", "keyword")) {
-      let expr = muts.parse(parseExpr, 0);
-      if (expr instanceof ErrorNode && muts.isNext(";"))
-        expr = void 0;
-      if (expr instanceof ErrorNode)
-        return expr;
-      return new ReturnStatementNode(s, muts.current(), {
-        expr
-      });
-    }
-    if (muts.expect("struct", "keyword")) {
-      const name2 = muts.expect(identRegex, "identifier");
-      if (!name2)
-        return muts.err(s, "Expected an identifier.");
-      if (!muts.expect("{", "bracket"))
-        return muts.err(s, "Expected '{'");
-      const fields = enclose(s, muts, "}", "Expected '}'", "bracket", (muts2) => {
-        const def2 = muts2.parse(parseDefinition, 0);
-        if (!muts2.expect(";", "semicolon"))
-          return muts2.err(s, "Expected ';'");
-        return def2;
-      });
-      if (fields instanceof ErrorNode)
-        return fields;
-      return new StructDefinitionNode(s, muts.current(), {
-        fields,
-        name: name2
-      });
-    }
-    muts = s.mut();
-    const def = muts.parse(parseDefinition, 0);
-    if (def instanceof DefinitionNode && muts.isNext(";")) {
-      return new VariableDefinitionNode(s, muts.current(), {
-        definition: def
-      });
-    }
-    if (def instanceof ErrorNode) {
-      muts = s.mut();
-      if (muts.isNext("if")) {
-        const ifStmt = muts.parse(parseIfElseStatement, 0);
-        return ifStmt;
-      }
-      if (muts.isNext("for") || muts.isNext("while")) {
-        const loop = muts.parse(parseLoop, 0);
-        return loop;
-      }
-      const assignment = (() => {
-        muts = s.mut();
-        const left = muts.parse(parseExpr, 0);
-        if (left instanceof ErrorNode)
-          return;
-        const opEquals = muts.expect(opEqualsRegex, "operator");
-        if (!opEquals)
-          return;
-        const op = opEquals === "=" ? void 0 : opEquals.slice(0, 1);
-        const right = muts.parse(parseExpr, 0);
-        if (right instanceof ErrorNode)
-          return;
-        return new AssignmentNode(s, muts.current(), {
-          left,
-          op,
-          right
-        });
-      })();
-      if (!assignment)
-        return parseExpr(s);
-      return assignment;
-    }
-    return muts.match([["(", "bracket", () => {
-      const args = enclose(s, muts, ")", "Expected ')'", "bracket", (muts2) => {
-        const def2 = muts2.parse(parseDefinition, 0);
-        if (!muts2.expect(",", "operator") && !muts2.isNext(")"))
-          return muts2.err(s, "Expected ','");
-        return def2;
-      });
-      if (args instanceof ErrorNode)
-        return args;
-      const body = parseCurlyBracesDelimitedBody(s, muts);
-      if (body instanceof ErrorNode)
-        return body;
-      return new FunctionDefNode(s, muts.current(), {
-        returnTypeAndName: def,
-        args,
-        body
-      });
-    }], ["=", "operator", (name2) => {
-      const value = muts.parse(parseExpr, 0);
-      if (value instanceof ErrorNode)
-        return value;
-      return new VariableDefinitionNode(s, muts.current(), {
-        value,
-        definition: def
-      });
-    }], [";", "semicolon", () => {
-      return new VariableDefinitionNode(s, muts.current(), {
-        definition: def
-      });
-    }]], () => {
-      return parseExpr(s);
-    });
-    return parseExpr(s);
-  }
-  function parseExpr(s) {
-    let left = parseInitExpr(s);
-    if (left instanceof ErrorNode)
-      return left;
-    let currentSrc = left.end;
-    while (true) {
-      const nextBindingPower = getBindingPowerOfNextToken(currentSrc);
-      if (nextBindingPower <= s.bindingPower())
-        break;
-      const consequent = parseConsequentExpr(left.setBindingPower(nextBindingPower));
-      if (consequent instanceof ErrorNode)
-        break;
-      left = consequent;
-    }
-    return left;
-  }
-  function decodeString(str) {
-    let decodedStr = "";
-    for (let i = 0; i < str.length; i++) {
-      if (str[i] === "\\") {
-        switch (str[++i]) {
-          case "t":
-          case "r":
-          case "n":
-          case "0":
-          case "\\":
-            decodedStr += {
-              t: "	",
-              r: "\r",
-              n: "\n",
-              "0": "\0",
-              "\\": "\\"
-            }[str[i]];
-            break;
-          case "x": {
-            const num = parseInt(str[++i] + str[++i], 16);
-            decodedStr += String.fromCharCode(num);
-            break;
-          }
-          case "u": {
-            const num = parseInt(str[++i] + str[++i] + str[++i] + str[++i], 16);
-            decodedStr += String.fromCharCode(num);
-            break;
-          }
-        }
-      } else {
-        decodedStr += str[i];
-      }
-    }
-    return decodedStr;
-  }
-  function parseInitExpr(s) {
-    let muts = s.mut();
-    return muts.match([
-      // char literal
-      [charLiteralRegex, "string", (str) => {
-        const char = decodeString(str.slice(1, -1));
-        return new NumberNode(s, muts.current(), {
-          num: Number(char.charCodeAt(0)),
-          type: "i",
-          bytes: 1
-        });
-      }],
-      // string literal
-      [stringLiteralRegex, "string", (inputStr) => {
-        const str = decodeString(inputStr.slice(1, -1));
-        return new StringLiteralNode(s, muts.current(), {
-          str,
-          pointer: 0
-        });
-      }],
-      // unary op
-      [unaryOpRegex, "operator", (op) => {
-        const value = muts.parse(parseExpr, UnaryBindingPowers[op]);
-        return new UnaryOpNode(s, muts.current(), {
-          value,
-          op
-        });
-      }],
-      // parenthesized
-      ["(", "bracket", () => {
-        let beforeTypecast = muts.current();
-        const typecast = muts.parse(parseTypeAnnotation, 0);
-        if (typecast instanceof TypeAnnotationNode) {
-          const typecastNode = (() => {
-            if (!muts.expect(")", "bracket"))
-              return;
-            const value = muts.parse(parseExpr, 150);
-            if (value instanceof ErrorNode)
-              return;
-            return new TypecastNode(s, muts.current(), {
-              type: typecast,
-              value
-            });
-          })();
-          if (typecastNode)
-            return typecastNode;
-        }
-        muts = beforeTypecast.mut();
-        const expr = muts.parse(parseExpr, 0);
-        if (!muts.expect(")", "bracket"))
-          return muts.err(s, "Expected ')'.");
-        return expr.setParserPointer(muts.current());
-      }],
-      // number
-      [numberRegex, "number", (num) => {
-        const numtype = muts.expect(numberTypeRegex, "number") ?? (num.includes(".") ? "f" : "i");
-        return new NumberNode(s, muts.current(), {
-          num: Number(num),
-          type: numtype
-        });
-      }],
-      [identRegex, "identifier", (ident) => {
-        return muts.match(
-          [
-            // function call
-            ["(", "bracket", () => {
-              let args = [];
-              while (!muts.isNext(")")) {
-                const arg = muts.parse(parseExpr, 0);
-                args.push(arg);
-                if (!muts.expect(",", "comma"))
-                  break;
-              }
-              if (!muts.expect(")", "bracket")) {
-                seek(s, muts, ")", "bracket", "Expected a ')'");
-                args.push(muts.err(s, "Malformed function argument(s)."));
-              }
-              return new FunctionCallNode(s, muts.current(), {
-                args,
-                name: ident
-              });
-            }]
-          ],
-          // identifier
-          () => new IdentifierNode(s, muts.current(), {
-            name: ident
-          })
-        );
-      }]
-    ], () => muts.err(s, "Expected a number or an identifier."));
-  }
-  function parseConsequentExpr(left) {
-    const muts = left.end.mut();
-    console.log(left.text());
-    return muts.match([
-      // binary op
-      [opRegex, "operator", (op) => {
-        console.log("found op", op);
-        const bp = getBindingPowerOfNextToken(left.end);
-        const right = muts.parse(parseExpr, bp);
-        return new BinaryOpNode(left.start, muts.current(), {
-          left,
-          right,
-          op
-        });
-      }]
-    ], () => muts.err(left.start, "Expected a binary operator."));
-  }
-
-  // src/runtime/run.tsx
-  function retrieveNullTerminatedString(mem, i) {
-    const uint8array = new Uint8Array(mem);
-    const dst = [];
-    while (uint8array[i] != 0) {
-      dst.push(uint8array[i++]);
-    }
-    return new Uint8Array(dst).buffer;
-  }
-  var defaultFunctions = /* @__PURE__ */ new Map([["putc", {
-    args: [{
-      definition: DefaultPrimitives.int,
-      pointers: 0
-    }],
-    returns: {
-      definition: DefaultPrimitives.int,
-      pointers: 0
-    }
-  }]]);
-  function parse(code) {
-    const parseInput = new ParseInput(code, 0, 0);
-    const tree = parseStatementList(parseInput);
-    const errors = tree.check(new TypecheckContext(DefaultTypes, defaultFunctions));
-    return {
-      tree,
-      errors,
-      highlights: tree.end.highlights()
-    };
-  }
-  function run(code) {
-    const parseInput = new ParseInput(code, 0, 0);
-    const tree = parseStatementList(parseInput);
-    const errors = tree.check(new TypecheckContext(DefaultTypes, defaultFunctions));
-    if (errors.length > 0)
-      return {
-        type: "error",
-        errors,
-        highlights: tree.end.highlights()
-      };
-    const globalMem = {
-      mem: new ArrayBuffer(0)
-    };
-    allocateStringLiterals(tree, globalMem);
-    const finalState = tree.exec(new ExecutionContext({
-      littleEndian: true,
-      memory: concatArrayBuffers(globalMem.mem, new ArrayBuffer(256)),
-      stdout: "",
-      stack: [{
-        blocks: [{
-          bindings: /* @__PURE__ */ new Map()
-        }],
-        base: globalMem.mem.byteLength,
-        bindings: /* @__PURE__ */ new Map(),
-        temporaries: [],
-        functionDefinitions: /* @__PURE__ */ new Map([["printf", {
-          type: "external",
-          def(ctx, call) {
-            const args = call.d.args;
-            ctx = ctx.clone(call);
-            ctx = args[0].exec(ctx);
-            const value = ctx.popTempValueAndGetData();
-            const text = new TextDecoder().decode(retrieveNullTerminatedString(ctx.memory, value));
-            ctx.stdout += text;
-            return ctx;
-          }
-        }], ["putc", {
-          type: "external",
-          def(ctx, call) {
-            const args = call.d.args;
-            ctx = ctx.clone(call);
-            ctx = args[0].exec(ctx);
-            const value = ctx.popTempValueAndGetData();
-            ctx.stdout += String.fromCharCode(Number(value));
-            return ctx;
-          }
-        }]]),
-        freed: false,
-        returnType: {
-          definition: DefaultPrimitives.int,
-          pointers: 0
-        },
-        argc: 0
-      }],
-      esp: globalMem.mem.byteLength,
-      types: DefaultTypes
-    }));
-    return {
-      type: "success",
-      finalState,
-      highlights: tree.end.highlights()
-    };
   }
 
   // node_modules/@codemirror/state/dist/index.js
@@ -20117,6 +17902,2249 @@
     { key: "Alt-A", run: toggleBlockComment }
   ].concat(standardKeymap);
 
+  // src/lexing.tsx
+  var hexDigit = "[0-9a-fA-F]";
+  var stringLiteralWithEscapeCodesAnd = (strs) => ["\\\\(n|t|r|0|\\\\)", `\\\\x${hexDigit}{2}`, `\\\\u${hexDigit}{4}`, ...strs].join("|");
+  var charLiteralRegex = new RegExp(`'(${stringLiteralWithEscapeCodesAnd(["[^']"])})'`);
+  var stringLiteralRegex = new RegExp(`"(${stringLiteralWithEscapeCodesAnd(['[^"]'])})*"`);
+  var numberRegex = /[0-9]+(\.[0-9]*)?/;
+  var identRegex = /[a-zA-Z_][a-zA-Z0-9_]*/;
+  var skipRegex = /[ \r\t\n]+/;
+  function escapeRegex(string2) {
+    return string2.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
+  }
+  var opSymbols = ["+", "-", "*", "/", "||", "&&", "^^", "==", "!=", ">=", "<=", ">", "<", "&", "|", "^", "<<", ">>", ".", "->", "%"];
+  var opRegex = new RegExp(`(${opSymbols.map((s) => escapeRegex(s)).join("|")})(?!=)`);
+  var opEqualsRegex = new RegExp(`(${opSymbols.map((s) => escapeRegex(s)).join("|")}|)=`);
+  console.log(opRegex);
+  var numberTypeRegex = /[fui]/g;
+  var unaryOpRegex = ["!", "*", "&", "~"];
+
+  // src/runtime/runtime.tsx
+  function assert(cond, msg) {
+    if (!cond)
+      throw new Error("ASSERTION FAILED: " + msg);
+  }
+  function notNull(v, name2, ctx) {
+    if (v === void 0 || v === null) {
+      console.log(ctx);
+      throw new ExecutionError(`EXPECTED ${name2} TO NOT BE UNDEFINED.`, ctx);
+    }
+    return v;
+  }
+  function bigintify(n, type) {
+    if ((type.definition.category === "int" || type.definition.category === "uint") && type.definition.size === 8)
+      return BigInt(n);
+    return n;
+  }
+  function cloneArrayBuffer(buf) {
+    const dst = new ArrayBuffer(buf.byteLength);
+    new Uint8Array(dst).set(new Uint8Array(buf));
+    return dst;
+  }
+  var ExecutionContext = class _ExecutionContext {
+    constructor(opts, prev, executor) {
+      this.stack = opts.stack.slice();
+      this.memory = cloneArrayBuffer(opts.memory);
+      this.littleEndian = opts.littleEndian;
+      this.view = new DataView(this.memory);
+      this.prev = prev;
+      this.types = new Map(opts.types);
+      this.esp = opts.esp;
+      this.stdout = opts.stdout;
+      if (this.prev)
+        this.prev.next = this;
+      this.executor = executor;
+    }
+    getvar(name2) {
+      return this.stacktop().bindings.get(name2) ?? this.stack[0].bindings.get(name2);
+    }
+    clone(executor) {
+      return new _ExecutionContext({
+        memory: this.memory,
+        littleEndian: this.littleEndian,
+        stack: this.stack,
+        esp: this.esp,
+        types: this.types,
+        stdout: this.stdout
+      }, this, executor);
+    }
+    sizeof(type) {
+      if (type.pointers > 0)
+        return 4;
+      if (type.definition.category === "struct") {
+        return type.definition.fields.reduce((prev, field) => prev + this.sizeof(field[1]), 0);
+      }
+      return type.definition.size;
+    }
+    _setStruct(instance, value) {
+      const mem = new Uint8Array(this.memory.slice(instance.offset));
+      const valAsUint8array = new Uint8Array(value);
+      const size = this.sizeof(instance.type);
+      for (let i = 0; i < size; i++) {
+        mem[i] = valAsUint8array[i];
+      }
+    }
+    _getStruct(instance) {
+      return this.memory.slice(instance.offset, instance.offset + this.sizeof(instance.type));
+    }
+    setVar(instance, value) {
+      if (instance.type.definition.category === "struct")
+        return this._setStruct(instance, value);
+      const typecode = instance.type.definition.category + instance.type.definition.size;
+      const useBigInt = typecode === "int8" || typecode === "uint8";
+      const setterFn = instance.type.pointers > 0 ? this.view.setUint32 : {
+        int1: this.view.setInt8,
+        int2: this.view.setInt16,
+        int4: this.view.setInt32,
+        int8: this.view.setBigInt64,
+        uint1: this.view.setUint8,
+        uint2: this.view.setUint16,
+        uint4: this.view.setUint32,
+        uint8: this.view.setBigUint64,
+        float4: this.view.setFloat32,
+        float8: this.view.setFloat64
+      }[typecode];
+      assert(setterFn, `setterFn exists (typecode ${typecode})`);
+      return setterFn?.apply(this.view, [
+        instance.offset,
+        // @ts-expect-error no thank you
+        useBigInt ? BigInt(value) : Number(value),
+        this.littleEndian
+      ]);
+    }
+    getVar(instance) {
+      if (instance.type.definition.category === "struct")
+        return this._getStruct(instance);
+      const getterFn = instance.type.pointers > 0 ? this.view.getUint32 : {
+        int1: this.view.getInt8,
+        int2: this.view.getInt16,
+        int4: this.view.getInt32,
+        int8: this.view.getBigInt64,
+        uint1: this.view.getUint8,
+        uint2: this.view.getUint16,
+        uint4: this.view.getUint32,
+        uint8: this.view.getBigUint64,
+        float4: this.view.getFloat32,
+        float8: this.view.getFloat64
+      }[instance.type.definition.category + instance.type.definition.size];
+      assert(getterFn, "getterFn exists");
+      return getterFn.apply(this.view, [instance.offset, this.littleEndian]);
+    }
+    _push(type, value, creator, doNotSetVar) {
+      const esp = this.esp;
+      if (type.definition.category === "struct" && type.pointers === 0) {
+        for (const [fieldname, fieldvalue] of type.definition.fields) {
+          this._push(fieldvalue, bigintify(0, fieldvalue), creator);
+        }
+        return {
+          type,
+          offset: esp,
+          creator
+        };
+      }
+      const varInstance = {
+        type,
+        offset: esp,
+        creator
+      };
+      this.esp += this.sizeof(type);
+      if (!doNotSetVar)
+        this.setVar(varInstance, value);
+      return varInstance;
+    }
+    stacktop() {
+      return this.stack[this.stack.length - 1];
+    }
+    blocktop() {
+      return this.stacktop().blocks[this.stacktop().blocks.length - 1];
+    }
+    pushAnonymous(type, value, creator) {
+      const instance = this._push(type, value, creator);
+      this.stacktop().temporaries.push(instance);
+    }
+    pushNamed(type, value, name2, creator) {
+      const instance = this._push(type, value, creator);
+      const binding = {
+        ...instance,
+        name: name2
+      };
+      this.stacktop().bindings.set(name2, binding);
+      this.blocktop().bindings.set(name2, binding);
+    }
+    pushBlock() {
+      this.stacktop().blocks.push({
+        bindings: /* @__PURE__ */ new Map()
+      });
+    }
+    popBlock() {
+      const block = notNull(this.stacktop().blocks.pop(), "block", this);
+      for (const [name2, binding] of [...block.bindings].reverse()) {
+        this.esp -= this.sizeof(binding.type);
+        this.stacktop().bindings.delete(name2);
+      }
+    }
+    popTempValue() {
+      const val = notNull(this.stacktop().temporaries.pop(), "tempvalue in stack", this);
+      this.esp -= this.sizeof(val.type);
+      return val;
+    }
+    popTempValueAndGetData() {
+      const val = this.popTempValue();
+      return this.getVar(val);
+    }
+    popTempValueAndGetBoth() {
+      const val = this.popTempValue();
+      return {
+        value: this.getVar(val),
+        typeinfo: val
+      };
+    }
+    addFunctionDefinition(name2, node) {
+      this.stacktop().functionDefinitions.set(name2, {
+        def: node,
+        type: "internal"
+      });
+    }
+    getFunctionDefinition(name2) {
+      for (const frame of this.stack.slice().reverse()) {
+        const def = frame.functionDefinitions.get(name2);
+        if (def) {
+          return def;
+        }
+      }
+    }
+    popStackFrame() {
+      const top2 = this.stack.pop();
+      if (!top2)
+        throw new ExecutionError("Popping off of an empty stack!", this);
+      top2.freed = true;
+      this.esp = top2.base;
+      for (let i = 0; i < top2.argc; i++) {
+        this.popTempValue();
+      }
+      return top2;
+    }
+  };
+  var DefaultPrimitives = {
+    // integer types
+    long: {
+      size: 8,
+      category: "int",
+      name: "long"
+    },
+    int: {
+      size: 4,
+      category: "int",
+      name: "int"
+    },
+    short: {
+      size: 2,
+      category: "int",
+      name: "short"
+    },
+    char: {
+      size: 1,
+      category: "int",
+      name: "char"
+    },
+    // unsigned integer types
+    "unsigned long": {
+      size: 8,
+      category: "int",
+      name: "unsigned long"
+    },
+    "unsigned int": {
+      size: 4,
+      category: "int",
+      name: "unsigned int"
+    },
+    "unsigned short": {
+      size: 2,
+      category: "int",
+      name: "unsigned short"
+    },
+    "unsigned char": {
+      size: 1,
+      category: "int",
+      name: "unsigned char"
+    },
+    // floats
+    float: {
+      size: 4,
+      category: "float",
+      name: "float"
+    },
+    double: {
+      size: 8,
+      category: "float",
+      name: "double"
+    },
+    // bool
+    bool: {
+      size: 1,
+      category: "uint",
+      name: "bool"
+    }
+  };
+  var IntsBySize = {
+    1: DefaultPrimitives.char,
+    2: DefaultPrimitives.short,
+    4: DefaultPrimitives.int,
+    8: DefaultPrimitives.long
+  };
+  var UintsBySize = {
+    1: DefaultPrimitives["unsigned char"],
+    2: DefaultPrimitives["unsigned short"],
+    4: DefaultPrimitives["unsigned int"],
+    8: DefaultPrimitives["unsigned long"]
+  };
+  var FloatsBySize = {
+    4: DefaultPrimitives.float,
+    8: DefaultPrimitives.double
+  };
+  var DefaultTypes = new Map(Object.entries(DefaultPrimitives).map(([k, v]) => [k, {
+    ...v,
+    name: k
+  }]));
+  function execAndRetrieveData(ctx, expr) {
+    ctx = expr.exec(ctx);
+    return {
+      ctx,
+      data: ctx.popTempValueAndGetBoth()
+    };
+  }
+  function constructTypeFromNode(ctx, node) {
+    return {
+      definition: notNull(ctx.types.get(node.d.name), `Type '${node.d.name}' does not exist.`, ctx),
+      pointers: node.d.pointers
+    };
+  }
+
+  // src/typecheck.tsx
+  var TypecheckContext = class {
+    knownTypeNames = /* @__PURE__ */ new Map();
+    stack = [];
+    constructor(knownTypes, initFunctionTypes) {
+      this.knownTypeNames = knownTypes;
+      this.initFunctionTypes = initFunctionTypes;
+    }
+    getTypeFromName(node) {
+      const type = this.knownTypeNames.get(node.d.name);
+      if (type)
+        return {
+          success: true,
+          type: {
+            pointers: node.d.pointers,
+            definition: type
+          }
+        };
+      return {
+        success: false,
+        why: [{
+          node,
+          msg: `Type '${node.d.name}' does not exist.`
+        }]
+      };
+    }
+    getVariableType(node) {
+      const stacktop = this.stacktop();
+      const name2 = node.d.name;
+      for (const block of stacktop.blocks.slice().reverse()) {
+        const v2 = block.knownVariableTypes.get(name2);
+        if (v2)
+          return {
+            type: v2,
+            success: true
+          };
+      }
+      const v = this.stack[0].blocks[0].knownVariableTypes.get(name2);
+      if (v)
+        return {
+          type: v,
+          success: true
+        };
+      return {
+        success: false,
+        why: [{
+          node,
+          msg: `The variable '${node.d.name}' does not exist.`
+        }]
+      };
+    }
+    getFunctionTypes(name2, node) {
+      const v = this.stack[0].knownFunctionTypes.get(name2);
+      if (v)
+        return {
+          success: true,
+          ...v
+        };
+      return {
+        success: false,
+        why: [{
+          node,
+          msg: `The function '${name2}' does not exist.`
+        }]
+      };
+    }
+    stacktop() {
+      return this.stack[this.stack.length - 1];
+    }
+    blocktop() {
+      return this.stacktop().blocks[this.stacktop().blocks.length - 1];
+    }
+    withBlock(cb) {
+      this.stacktop().blocks.push({
+        knownVariableTypes: /* @__PURE__ */ new Map()
+      });
+      cb();
+      this.stacktop().blocks.pop();
+    }
+    withStackFrame(cb) {
+      this.stack.push({
+        blocks: [{
+          knownVariableTypes: /* @__PURE__ */ new Map()
+        }],
+        knownFunctionTypes: this.stack.length == 0 ? this.initFunctionTypes : /* @__PURE__ */ new Map()
+      });
+      cb();
+      this.stack.pop();
+    }
+    defineVariable(name2, type) {
+      this.blocktop().knownVariableTypes.set(name2, type);
+    }
+    defineFunction(name2, returnType, argtypes) {
+      this.stack[0].knownFunctionTypes.set(name2, {
+        returns: returnType,
+        args: argtypes
+      });
+    }
+  };
+  function typeErr(node, ...msgs) {
+    return {
+      success: false,
+      why: msgs.map((msg) => ({
+        node,
+        msg
+      }))
+    };
+  }
+  function typeSuccess(type) {
+    return {
+      success: true,
+      type
+    };
+  }
+  function organizeTypeErrors(typeerrors) {
+    const errs = typeerrors.filter((t2) => !t2.success);
+    const successes = typeerrors.filter((t2) => t2.success).map((t2) => t2.type);
+    if (errs.length === 0)
+      return [void 0, successes];
+    return [{
+      success: false,
+      why: errs.map((err) => {
+        if (err.success)
+          return [];
+        return err.why;
+      }).flat(1)
+    }, successes];
+  }
+  function isStruct(type) {
+    return type.definition.category === "struct" && type.pointers === 0;
+  }
+  function isPointer(type) {
+    return type.pointers > 0;
+  }
+  function isFloat(type) {
+    return type.definition.category === "float" && type.pointers === 0;
+  }
+  function typeToString(type) {
+    let basename = type.definition.name;
+    if (type.definition.category === "struct")
+      basename = "struct " + basename;
+    return basename + " " + "".padStart(type.pointers, "*");
+  }
+  function combineTypesForArithmetic(node, a, b, op) {
+    const aPointer = isPointer(a);
+    const bPointer = isPointer(b);
+    if (aPointer && bPointer)
+      return typeErr(node, "Cannot do arithmetic between a pointer and a pointer.");
+    if (a.definition.category === "struct" || b.definition.category === "struct")
+      return typeErr(node, "Cannot do arithmetic on structs.");
+    if (aPointer || bPointer) {
+      if (op !== "+" && op !== "-")
+        return typeErr(node, `Cannot do the '${op}' operation with a pointer.`);
+    }
+    const biggestSize = Math.max(a.definition.size, b.definition.size);
+    const switchToFloat = a.definition.category === "float" || b.definition.category === "float";
+    const switchToSigned = a.definition.category === "int" || b.definition.category === "int";
+    if (switchToFloat) {
+      return typeSuccess({
+        definition: FloatsBySize[biggestSize],
+        pointers: 0
+      });
+    }
+    if (switchToSigned) {
+      return typeSuccess({
+        definition: IntsBySize[biggestSize],
+        pointers: 0
+      });
+    }
+    return typeSuccess(a.definition.size === biggestSize ? a : b);
+  }
+  function combineTypesForComparisonAndLogical(node, a, b, op) {
+    if (op !== "!=" && op !== "==" && isStruct(a) || isStruct(b))
+      return typeErr(node, `Cannot use the '${op}' operator on structs.`);
+    return typeSuccess({
+      definition: DefaultPrimitives.char,
+      pointers: 0
+    });
+  }
+  function combineTypesForBitwise(node, a, b, op) {
+    if (isFloat(a) || isFloat(b))
+      return typeErr(node, `Cannot use the '${op}' operator on a floating-point value.`);
+    if (isPointer(a) || isPointer(b))
+      return typeErr(node, `Cannot use the '${op}' operator on pointers.`);
+    return combineTypesForArithmetic(node, a, b, "+");
+  }
+  function typecheckBinaryOperation(ctx, op, left, right, node) {
+    const mltype = left.type(ctx);
+    const mrtype = right.type(ctx);
+    const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
+    if (errs)
+      return errs;
+    switch (op) {
+      case "->":
+      case ".":
+        return typeErr(node, "This operation is currently not supported.");
+    }
+    switch (op) {
+      case "+":
+      case "-":
+      case "*":
+      case "/":
+      case "%":
+        return combineTypesForArithmetic(node, ltype, rtype, op);
+      case "!=":
+      case "==":
+      case "<=":
+      case ">":
+      case ">=":
+      case "<":
+      case "&&":
+      case "^^":
+      case "||":
+        return combineTypesForComparisonAndLogical(node, ltype, rtype, op);
+      case "&":
+      case "^":
+      case "|":
+      case "<<":
+      case ">>":
+        return combineTypesForBitwise(node, ltype, rtype, op);
+    }
+  }
+  function pointerTo(type) {
+    return {
+      definition: type.definition,
+      pointers: type.pointers + 1
+    };
+  }
+  function dereference(type) {
+    return {
+      definition: type.definition,
+      pointers: type.pointers - 1
+    };
+  }
+  function typecheckUnaryOperation(ctx, op, value, node) {
+    const mtype = value.type(ctx);
+    const [errs, [type]] = organizeTypeErrors([mtype]);
+    if (errs)
+      return errs;
+    if (op === "*") {
+      if (!isPointer(type))
+        return typeErr(node, `The '*' operator can only be applied to a pointer type, as it represents the dereferencing of a pointer.`);
+      return typeSuccess(dereference(type));
+    } else if (op === "!") {
+      if (isStruct(type))
+        return typeErr(node, `The '!' operator cannot be applied to a struct type.`);
+      return typeSuccess({
+        definition: DefaultPrimitives.char,
+        pointers: 0
+      });
+    } else if (op === "~") {
+      if (isFloat(type))
+        return typeErr(node, `The '~' operator cannot be applied to a floating point type.`);
+      if (isStruct(type))
+        return typeErr(node, `The '~' operator cannot be applied to a struct type.`);
+      return typeSuccess(type);
+    }
+    const lv = value.typeLValue(ctx);
+    const [errs2, [lvalueType]] = organizeTypeErrors([lv]);
+    if (errs2)
+      return errs2;
+    return typeSuccess(pointerTo(lvalueType));
+  }
+  var getLineAndCol = (str, index) => {
+    const line = 1 + (str.slice(0, index).match(/\n/g)?.length ?? 0);
+    const col = str.slice(0, index).match(/(\n|^).*$/)?.[0]?.length ?? 1;
+    return {
+      line,
+      col
+    };
+  };
+  function formatDiagnostic(diag) {
+    const {
+      line,
+      col
+    } = getLineAndCol(diag.node.start.text(), diag.node.start.position());
+    return `${diag.msg}
+    at '${diag.node.text()}' (${line}:${col})`;
+  }
+
+  // src/parser-utils.tsx
+  function matchOnString(matcher, str) {
+    if (typeof matcher === "string") {
+      return str.startsWith(matcher) ? matcher : void 0;
+    } else if (Array.isArray(matcher)) {
+      for (const matchStr of matcher) {
+        const match = matchOnString(matchStr, str);
+        if (match)
+          return match;
+      }
+      return void 0;
+    } else if (matcher instanceof RegExp) {
+      const match = matcher.exec(str);
+      if (!match)
+        return void 0;
+      if (match.index === 0)
+        return match[0];
+    }
+  }
+  var ParseInput = class _ParseInput {
+    // syntax highlights are stored in a linked list to avoid backtracking problems
+    // while avoiding excess memory use
+    end() {
+      return this.pos >= this.src.length;
+    }
+    highlights() {
+      let hl = this._highlights;
+      let highlights = [];
+      while (hl) {
+        highlights.push(hl);
+        hl = hl.lastRange;
+      }
+      return highlights.reverse();
+    }
+    text() {
+      return this.src;
+    }
+    position() {
+      return this.pos;
+    }
+    slice() {
+      return this.src.slice(this.pos);
+    }
+    constructor(src, position, bindingPower, highlights) {
+      this.src = src;
+      this.bp = bindingPower;
+      this.pos = position;
+      this._highlights = highlights;
+    }
+    isNext(matcher) {
+      const skipmatch = matchOnString(skipRegex, this.slice());
+      const strmatch = matchOnString(matcher, this.slice().slice(skipmatch?.length ?? 0));
+      if (!strmatch)
+        return void 0;
+      return strmatch;
+    }
+    expect(matcher, highlight) {
+      const skipmatch = matchOnString(skipRegex, this.slice());
+      const strmatch = matchOnString(matcher, this.slice().slice(skipmatch?.length ?? 0));
+      if (!strmatch)
+        return [void 0, this];
+      const len = strmatch.length + (skipmatch?.length ?? 0);
+      this._highlights = {
+        highlight,
+        start: this.pos,
+        end: this.pos + len,
+        lastRange: this._highlights
+      };
+      return [strmatch, new _ParseInput(this.src, this.pos + len, this.bindingPower(), this._highlights)];
+    }
+    match(branches, fallback) {
+      for (const b of branches) {
+        const result = this.expect(b[0], b[1]);
+        if (!result[0])
+          continue;
+        return b[2](result[0], result[1]);
+      }
+      return fallback(this);
+    }
+    err(start, msg) {
+      return [new ErrorNode(start, this, {
+        msg
+      }), this];
+    }
+    bindingPower() {
+      return this.bp;
+    }
+    setBindingPower(bp) {
+      return new _ParseInput(this.src, this.pos, bp, this._highlights);
+    }
+    mut() {
+      return new MutableParseInput(this);
+    }
+  };
+  var MutableParseInput = class {
+    constructor(src) {
+      this.src = src;
+    }
+    end() {
+      return this.src.end();
+    }
+    highlights() {
+      return this.src.highlights();
+    }
+    text() {
+      return this.src.text();
+    }
+    position() {
+      return this.src.position();
+    }
+    isNext(matcher) {
+      return this.src.isNext(matcher);
+    }
+    expect(matcher, highlight) {
+      const [result, src] = this.src.expect(matcher, highlight);
+      this.src = src;
+      return result;
+    }
+    match(branches, fallback) {
+      const [result, src] = this.src.match(branches.map((b) => [b[0], b[1], (str, src2) => {
+        this.src = src2;
+        return [b[2](str), this.src];
+      }]), (src2) => {
+        this.src = src2;
+        return [fallback(), this.src];
+      });
+      this.src = src;
+      return result;
+    }
+    err(start, msg) {
+      const [result, src] = this.src.err(start, msg);
+      this.src = src;
+      return result;
+    }
+    bindingPower() {
+      return this.src.bindingPower();
+    }
+    setBindingPower(bp) {
+      this.src = this.src.setBindingPower(bp);
+    }
+    current() {
+      return this.src;
+    }
+    parse(nodetype, bindingPower) {
+      const node = nodetype(this.src.setBindingPower(bindingPower));
+      this.src = node.end;
+      return node;
+    }
+  };
+  var ParseNode = class {
+    constructor(start, end, d) {
+      this.d = d;
+      this.start = start;
+      this.end = end;
+    }
+    check(ctx) {
+      const errors = [...this.checkInner(ctx)].flat();
+      return errors.filter((e) => e);
+    }
+    map(callback) {
+      callback(this);
+      this.mapInner(callback);
+    }
+    // lvalues are treated as pointers to whatever they're being assigned to
+    execLValue(ctx) {
+      throw new ExecutionError(`This expression cannot be used as an lvalue.`, ctx);
+    }
+    setBindingPower(bp) {
+      return new this.constructor(this.start, this.end.setBindingPower(bp), this.d);
+    }
+    setParserPointer(pp) {
+      this.end = pp;
+      return this;
+    }
+    typeLValue(ctx) {
+      return typeErr(this, "This cannot be used as an lvalue (thing that can be assigned to).");
+    }
+    checkLValue(ctx) {
+      const result = this.typeLValue(ctx);
+      if (result.success)
+        return [];
+      return result.why;
+    }
+    text() {
+      return this.start.text().slice(this.start.position(), this.end.position());
+    }
+  };
+  function requiresSemicolon(stmt) {
+    return !(stmt instanceof IfNode || stmt instanceof FunctionDefNode || stmt instanceof StructDefinitionNode || stmt instanceof LoopNode);
+  }
+  var BindingPowers = {
+    // logical
+    "||": 40,
+    "^^": 50,
+    "&&": 60,
+    // bitwise
+    "|": 70,
+    "^": 80,
+    "&": 90,
+    // comparison
+    "==": 100,
+    "!=": 100,
+    ">=": 110,
+    "<=": 110,
+    ">": 110,
+    "<": 110,
+    // bitshift
+    ">>": 120,
+    "<<": 120,
+    // arithmetic
+    "+": 130,
+    "-": 130,
+    "*": 140,
+    "/": 140,
+    "%": 140,
+    // member access
+    ".": 160,
+    "->": 160
+  };
+  var UnaryBindingPowers = {
+    // unaries
+    "*": 150,
+    "&": 150,
+    "~": 150,
+    "!": 150
+  };
+  function seek(start, muts, matcher, highlight, err) {
+    let i = 0;
+    while (!muts.end() && !muts.isNext(matcher)) {
+      muts.expect(/[\s\S]/, "operator");
+      i++;
+      if (i > 1e4) {
+        console.log("ASDASD", i, muts);
+        break;
+      }
+    }
+    if (!muts.expect(matcher, highlight))
+      return muts.err(start, err);
+  }
+
+  // src/nodes/BinaryOpNode.tsx
+  function handleBinaryOperation(ctx, op, node) {
+    const right = ctx.popTempValueAndGetBoth();
+    const left = ctx.popTempValueAndGetBoth();
+    let lv = left.value;
+    let rv = right.value;
+    switch (op) {
+      case "->":
+      case ".":
+        return ctx;
+    }
+    if (lv instanceof ArrayBuffer || rv instanceof ArrayBuffer) {
+      throw new ExecutionError("Cannot do this operation between structs", ctx);
+    }
+    if (left.typeinfo.type.definition.category === "float" || right.typeinfo.type.definition.category === "float") {
+      lv = Number(lv);
+      rv = Number(rv);
+    } else {
+      lv = BigInt(lv);
+      rv = BigInt(rv);
+    }
+    let output;
+    let outputType = left.typeinfo.type;
+    if ((op === "+" || op === "-") && (left.typeinfo.type.pointers > 0 || right.typeinfo.type.pointers > 0)) {
+      rv = Number(rv);
+      lv = Number(lv);
+      const leftIsPtr = left.typeinfo.type.pointers > 0;
+      if (op === "-") {
+        rv *= -1;
+      }
+      const ptrVal = leftIsPtr ? lv : rv;
+      const nonPtrVal = leftIsPtr ? rv : lv;
+      const ptrType = leftIsPtr ? left.typeinfo : right.typeinfo;
+      const nonPtrType = leftIsPtr ? right.typeinfo : left.typeinfo;
+      output = ptrVal + nonPtrVal * ctx.sizeof({
+        definition: ptrType.type.definition,
+        pointers: ptrType.type.pointers - 1
+      });
+      outputType = ptrType.type;
+      ctx.pushAnonymous(outputType, output, node);
+      return ctx;
+    }
+    switch (op) {
+      case "+":
+      case "-":
+      case "*":
+      case "/":
+      case "%":
+        output = {
+          "+": (a, b) => a + b,
+          "-": (a, b) => a - b,
+          "*": (a, b) => a * b,
+          "/": (a, b) => a / b,
+          "%": (a, b) => a % b
+        }[op](lv, rv);
+        break;
+      case "!=":
+      case "==":
+      case "<=":
+      case ">":
+      case ">=":
+      case "<":
+      case "&&":
+      case "^^":
+      case "||":
+        output = Number({
+          "==": (a, b) => a == b,
+          "!=": (a, b) => a != b,
+          ">=": (a, b) => a >= b,
+          ">": (a, b) => a > b,
+          "<=": (a, b) => a <= b,
+          "<": (a, b) => a < b
+        }[op](lv, rv));
+        break;
+      case "&":
+      case "^":
+      case "|":
+      case "<<":
+      case ">>":
+        output = {
+          "&": (a, b) => a & b,
+          "^": (a, b) => a ^ b,
+          "|": (a, b) => a | b,
+          ">>": (a, b) => a >> b,
+          "<<": (a, b) => a << b
+        }[op](lv, rv);
+        break;
+    }
+    if (output !== void 0) {
+      ctx.pushAnonymous(outputType, output, node);
+    }
+    return ctx;
+  }
+  var BinaryOpNode = class extends ParseNode {
+    debug() {
+      return `(${this.d.op} ${this.d.left.debug()} ${this.d.right.debug()})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = this.d.left.exec(ctx);
+      ctx = this.d.right.exec(ctx);
+      ctx = handleBinaryOperation(ctx, this.d.op, this);
+      return ctx;
+    }
+    // TODO: Implement lvalues here later
+    mapInner(cb) {
+      automap(this.d.left, cb);
+      automap(this.d.right, cb);
+    }
+    type(ctx) {
+      return typecheckBinaryOperation(ctx, this.d.op, this.d.left, this.d.right, this);
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+  };
+
+  // src/nodes/AssignmentNode.tsx
+  var AssignmentNode = class extends ParseNode {
+    debug() {
+      return `(${this.d.op ?? ""}= ${this.d.left.debug()} ${this.d.right.debug()})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = this.d.left.execLValue(ctx);
+      if (this.d.op) {
+        ctx = this.d.left.exec(ctx);
+      }
+      ctx = this.d.right.exec(ctx);
+      if (this.d.op) {
+        handleBinaryOperation(ctx, this.d.op, this);
+      }
+      const right = ctx.popTempValueAndGetBoth();
+      const left = ctx.popTempValueAndGetBoth();
+      ctx.setVar({
+        type: right.typeinfo.type,
+        offset: left.value,
+        creator: this
+      }, right.value);
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.left, cb);
+      automap(this.d.right, cb);
+    }
+    *checkInner(ctx) {
+      const mltype = this.d.left.typeLValue(ctx);
+      const mrtype = this.d.right.type(ctx);
+      const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
+      yield errs?.why;
+    }
+  };
+
+  // src/nodes/ErrorNode.tsx
+  var ErrorNode = class extends ParseNode {
+    debug() {
+      return `(#ERROR# '${this.d.msg}')`;
+    }
+    exec(ctx) {
+      throw new ExecutionError(`Parse Error: ${this.d.msg}`, ctx);
+      return ctx;
+    }
+    mapInner(cb) {
+    }
+    type(ctx) {
+      return {
+        success: false,
+        why: [{
+          node: this,
+          msg: this.d.msg
+        }]
+      };
+    }
+    *checkInner(ctx) {
+      console.log("got here!", defaultExprCheck(this, ctx));
+      yield defaultExprCheck(this, ctx);
+    }
+    checkLValue(ctx) {
+      return [...defaultExprCheck(this, ctx)];
+    }
+  };
+
+  // src/nodes/FunctionCallNode.tsx
+  var FunctionCallNode = class extends ParseNode {
+    debug() {
+      return `(${this.d.name} ${this.d.args.map((arg) => arg.debug()).join(" ")})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      for (const arg of this.d.args) {
+        ctx = arg.exec(ctx);
+      }
+      const fndef = ctx.getFunctionDefinition(this.d.name);
+      if (!fndef) {
+        console.log(ctx);
+        throw new ExecutionError(`Function '${fndef}' does not exist.`, ctx);
+      }
+      if (fndef.type === "internal") {
+        ctx = fndef.def.call(ctx);
+      } else {
+        ctx = fndef.def(ctx, this);
+      }
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.args, cb);
+    }
+    type(ctx) {
+      const functionTypeSig = ctx.getFunctionTypes(this.d.name, this);
+      if (functionTypeSig.success === false)
+        return functionTypeSig;
+      if (functionTypeSig.args.length !== this.d.args.length)
+        return {
+          success: false,
+          why: [{
+            node: this,
+            msg: `The function '${this.d.name}' takes ${functionTypeSig.args.length} arguments, but you supplied ${this.d.args.length} arguments.`
+          }]
+        };
+      const maybeArgTypes = this.d.args.map((arg) => arg.type(ctx));
+      const [errs, argTypes] = organizeTypeErrors(maybeArgTypes);
+      if (errs)
+        return errs;
+      const badargs = [];
+      console.log("fnname", this.d.name, "argtypes", argTypes, "typesig", functionTypeSig.args);
+      for (let i = 0; i < functionTypeSig.args.length; i++) {
+        if (!isStruct(argTypes[i]) && !isStruct(functionTypeSig.args[i]))
+          continue;
+        if (argTypes[i].definition !== functionTypeSig[i].definition)
+          badargs.push(`Argument ${i + 1} should be of type '${typeToString(argTypes[i])}', but you put '${typeToString(functionTypeSig[i])}'.`);
+      }
+      return {
+        type: functionTypeSig.returns,
+        success: true
+      };
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+  };
+
+  // src/nodes/FunctionDefNode.tsx
+  var FunctionDefNode = class extends ParseNode {
+    debug() {
+      return `(fndef ${this.d.args.map((arg) => `(${arg.debug()})`).join(" ")} ${this.d.body.map((v) => v.debug()).join(" ")})`;
+    }
+    exec(ctx) {
+      ctx.addFunctionDefinition(this.d.returnTypeAndName.d.name, this);
+      return ctx;
+    }
+    call(ctx) {
+      ctx = ctx.clone(this);
+      const ret = ctx.types.get(this.d.returnTypeAndName.d.type.d.name);
+      if (!ret)
+        throw new ExecutionError(`Return type '${this.d.returnTypeAndName.d.type.d.name}' does not exist.`, ctx);
+      const frame = {
+        base: ctx.esp,
+        bindings: /* @__PURE__ */ new Map(),
+        temporaries: [],
+        functionDefinitions: /* @__PURE__ */ new Map(),
+        freed: false,
+        returnType: {
+          definition: ret,
+          pointers: this.d.returnTypeAndName.d.type.d.pointers
+        },
+        argc: this.d.args.length,
+        blocks: [{
+          bindings: /* @__PURE__ */ new Map()
+        }]
+      };
+      let offset = 0;
+      for (const arg of this.d.args.slice().reverse()) {
+        const type = ctx.types.get(arg.d.type.d.name);
+        if (!type)
+          throw new ExecutionError(`Error with argument '${arg.d.name}': Type '${arg.d.type.d.name}' does not exist.`, ctx);
+        const fnargType = {
+          definition: type,
+          pointers: arg.d.type.d.pointers
+        };
+        offset += ctx.sizeof(fnargType);
+        frame.bindings.set(arg.d.name, {
+          offset: ctx.esp - offset,
+          type: fnargType,
+          name: arg.d.name,
+          creator: this
+        });
+      }
+      ctx.stack.push(frame);
+      ctx = handleStatementList(ctx, this.d.body).ctx;
+      if (!frame.freed) {
+        ctx = ctx.clone(this);
+        ctx.popStackFrame();
+      }
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.args, cb);
+      automap(this.d.returnTypeAndName, cb);
+      automap(this.d.body, cb);
+    }
+    *checkInner(ctx) {
+      const checks = [];
+      ctx.withStackFrame(() => {
+        for (const stmt of this.d.args)
+          checks.push(...stmt.check(ctx));
+        const argtypes = [];
+        for (const arg of this.d.args) {
+          const mt = ctx.getTypeFromName(arg.d.type);
+          const [errs2, [t2]] = organizeTypeErrors([mt]);
+          if (errs2) {
+            checks.push(...errs2.why);
+            continue;
+          }
+          ctx.defineVariable(arg.d.name, t2);
+          argtypes.push(t2);
+        }
+        const mrettype = ctx.getTypeFromName(this.d.returnTypeAndName.d.type);
+        const [errs, [rettype]] = organizeTypeErrors([mrettype]);
+        if (errs) {
+          checks.push(...errs.why);
+        } else {
+          ctx.defineFunction(this.d.returnTypeAndName.d.name, rettype, argtypes);
+        }
+      });
+      yield checks;
+    }
+  };
+
+  // src/nodes/IdentifierNode.tsx
+  var IdentifierNode = class extends ParseNode {
+    debug() {
+      return this.d.name;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      const data = ctx.getvar(this.d.name);
+      if (!data) {
+        throw new ExecutionError(`Identifier '${this.d.name}' does not exist.`, ctx);
+      }
+      ctx.pushAnonymous(data.type, ctx.getVar(data), this);
+      return ctx;
+    }
+    execLValue(ctx) {
+      ctx = ctx.clone(this);
+      const data = ctx.getvar(this.d.name);
+      if (!data) {
+        throw new ExecutionError(`Identifier '${this.d.name}' does not exist.`, ctx);
+      }
+      ctx.pushAnonymous({
+        definition: data.type.definition,
+        pointers: data.type.pointers + 1
+      }, data.offset, this);
+      return ctx;
+    }
+    mapInner() {
+    }
+    type(ctx) {
+      return ctx.getVariableType(this);
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+    typeLValue(ctx) {
+      return ctx.getVariableType(this);
+    }
+  };
+
+  // src/nodes/IfNode.tsx
+  var IfNode = class extends ParseNode {
+    debug() {
+      return `(if ${this.d.condition.debug()} (${autodebug(this.d.body)}) ${this.d.elseif ? `else ${autodebug(this.d.elseif)}` : ""})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = this.d.condition.exec(ctx);
+      const top2 = ctx.popTempValueAndGetData();
+      if (top2 == 0) {
+        ctx = this.d.elseif?.exec(ctx) ?? ctx;
+      } else {
+        ctx = handleStatementList(ctx, this.d.body).ctx;
+      }
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.condition, cb);
+      automap(this.d.body, cb);
+      automap(this.d.elseif, cb);
+    }
+    *checkInner(ctx) {
+      yield this.d.condition.check(ctx);
+      const checks = [];
+      ctx.withBlock(() => {
+        for (const stmt of this.d.body)
+          checks.push(...stmt.check(ctx));
+      });
+      yield checks;
+      yield this.d.elseif?.check(ctx);
+    }
+  };
+
+  // src/nodes/LoopNode.tsx
+  var LoopNode = class extends ParseNode {
+    debug() {
+      if (this.d.conditions.type === "for") {
+        return `(for (${autodebug(this.d.conditions.start)} ${autodebug(this.d.conditions.condition)} ${autodebug(this.d.conditions.iter)}) ${autodebug(this.d.body)})`;
+      } else {
+        return `(while ${this.d.conditions.condition.debug()} ${autodebug(this.d.body)})`;
+      }
+    }
+    // TODO: deal with stack misalignment from statements that contain expressions but don't do anything with them
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      const stacktop = ctx.stacktop();
+      const end = () => {
+        ctx.popBlock();
+        return ctx;
+      };
+      if (this.d.conditions.type === "while") {
+        ctx.pushBlock();
+        while (true) {
+          ctx = this.d.conditions.condition.exec(ctx);
+          const cond = ctx.popTempValueAndGetBoth();
+          if (cond.value == 0) {
+            break;
+          }
+          const list = handleStatementList(ctx, this.d.body);
+          ctx = list.ctx;
+          if (list.returned)
+            return ctx;
+        }
+      } else {
+        ctx = this.d.conditions.start?.exec(ctx) ?? ctx;
+        if (stacktop.freed)
+          return ctx;
+        while (true) {
+          ctx = this.d.conditions.condition?.exec(ctx) ?? ctx;
+          if (stacktop.freed)
+            return ctx;
+          const cond = this.d.conditions.condition ? ctx.popTempValueAndGetBoth() : void 0;
+          if (cond && cond.value == 0)
+            break;
+          const list = handleStatementList(ctx, this.d.body);
+          ctx = list.ctx;
+          if (list.returned)
+            return ctx;
+          ctx = this.d.conditions.iter?.exec(ctx) ?? ctx;
+          if (stacktop.freed)
+            return ctx;
+        }
+      }
+      return end();
+    }
+    mapInner(cb) {
+      automap(this.d.body, cb);
+      if (this.d.conditions.type === "while") {
+        automap(this.d.conditions.condition, cb);
+      } else {
+        automap(this.d.conditions.condition, cb);
+        automap(this.d.conditions.iter, cb);
+        automap(this.d.conditions.start, cb);
+      }
+    }
+    // TODO: add thing for making sure conditions are valid
+    *checkInner(ctx) {
+      const checks = [];
+      if (this.d.conditions.type === "while") {
+        ctx.withBlock(() => {
+          checks.push(...this.d.conditions.condition?.check(ctx) ?? []);
+          checks.push(...this.d.body.map((b) => b.check(ctx)).flat(1));
+        });
+      } else {
+        ctx.withBlock(() => {
+          if (this.d.conditions.type === "while")
+            return;
+          checks.push(...this.d.conditions.start?.check(ctx) ?? []);
+          checks.push(...this.d.conditions.condition?.check(ctx) ?? []);
+          checks.push(...this.d.conditions.iter?.check(ctx) ?? []);
+          ctx.withBlock(() => {
+            checks.push(...this.d.body.map((b) => b.check(ctx)).flat(1));
+          });
+        });
+      }
+      yield checks;
+    }
+  };
+
+  // src/nodes/NumberNode.tsx
+  var NumberNode = class extends ParseNode {
+    debug() {
+      return this.d.num.toString();
+    }
+    determineNumericType() {
+      const bytes = this.d.bytes ?? (this.d.type === "f" ? 8 : 4);
+      switch (this.d.type) {
+        case "f":
+          return {
+            definition: FloatsBySize[bytes],
+            pointers: 0
+          };
+        case "u":
+          return {
+            definition: UintsBySize[bytes],
+            pointers: 0
+          };
+        case "i":
+        default:
+          return {
+            definition: IntsBySize[bytes],
+            pointers: 0
+          };
+      }
+    }
+    exec(ctx) {
+      const ctx2 = ctx.clone(this);
+      ctx2.pushAnonymous(this.determineNumericType(), this.d.num, this);
+      return ctx2;
+    }
+    mapInner() {
+    }
+    type(ctx) {
+      return {
+        success: true,
+        type: this.determineNumericType()
+      };
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+  };
+
+  // src/nodes/ReturnStatementNode.tsx
+  var ReturnStatementNode = class extends ParseNode {
+    debug() {
+      return `(return ${autodebug(this.d.expr)})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = this.d.expr?.exec(ctx) ?? ctx;
+      let outputValue = 0;
+      if (this.d.expr) {
+        const output = ctx.popTempValueAndGetBoth();
+        outputValue = output.value;
+      }
+      const frame = ctx.popStackFrame();
+      ctx.pushAnonymous(frame.returnType, outputValue, this);
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.expr, cb);
+    }
+    // TODO: statically ensure that return type matches enclosing function type
+    *checkInner(ctx) {
+      if (this.d.expr)
+        yield this.d.expr.check(ctx);
+    }
+  };
+
+  // src/nodes/StatementListNode.tsx
+  var StatementListNode = class extends ParseNode {
+    debug() {
+      return this.d.body.map((s) => s.debug()).join("\n");
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = handleStatementList(ctx, this.d.body).ctx;
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.body, cb);
+    }
+    *checkInner(ctx) {
+      const checks = [];
+      ctx.withStackFrame(() => {
+        for (const stmt of this.d.body)
+          checks.push(...stmt.check(ctx));
+      });
+      yield checks;
+    }
+  };
+
+  // src/nodes/StringLiteralNode.tsx
+  var StringLiteralNode = class extends ParseNode {
+    debug() {
+      return `${JSON.stringify(this.d.str)}`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx.pushAnonymous(this._type(), this.d.pointer, this);
+      return ctx;
+    }
+    mapInner(callback) {
+    }
+    _type() {
+      return {
+        definition: DefaultPrimitives.char,
+        pointers: 1
+      };
+    }
+    type(ctx) {
+      return typeSuccess(this._type());
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+  };
+
+  // src/nodes/StructDefinitionNode.tsx
+  var StructDefinitionNode = class extends ParseNode {
+    debug() {
+      return `(struct ${this.d.name} (${autodebug(this.d.fields)}))`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx.types.set(this.d.name, {
+        category: "struct",
+        name: this.d.name,
+        fields: this.d.fields.map((f) => {
+          const fieldtype = ctx.types.get(f.d.type.d.name);
+          if (!fieldtype)
+            throw new ExecutionError(`The struct field '${f.d.name}' has type '${f.d.type}', which does not exist.`, ctx);
+          return [f.d.name, {
+            definition: fieldtype,
+            pointers: f.d.type.d.pointers
+          }];
+        })
+      });
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.fields, cb);
+    }
+    *checkInner(ctx) {
+    }
+  };
+
+  // src/nodes/TypecastNode.tsx
+  var TypecastNode = class extends ParseNode {
+    debug() {
+      return `(cast ${this.d.value.debug()} to ${this.d.type.debug()})`;
+    }
+    exec(ctx) {
+      const data = execAndRetrieveData(ctx, this.d.value);
+      ctx = data.ctx;
+      const type = constructTypeFromNode(ctx, this.d.type);
+      ctx.pushAnonymous(type, data.data.value, this);
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.type, cb);
+      automap(this.d.value, cb);
+    }
+    type(ctx) {
+      const type = ctx.getTypeFromName(this.d.type);
+      return type;
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+  };
+
+  // src/nodes/UnaryOpNode.tsx
+  var UnaryOpNode = class extends ParseNode {
+    debug() {
+      return `(${this.d.op} ${this.d.value.debug()})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = this.d.op === "&" ? this.d.value.execLValue(ctx) : this.d.value.exec(ctx);
+      const value = ctx.popTempValueAndGetBoth();
+      let output;
+      let outputType;
+      switch (this.d.op) {
+        case "!":
+          output = value.value == 0 ? 1 : 0;
+          outputType = DefaultPrimitives.bool;
+          break;
+        case "&":
+          output = value.value;
+          outputType = {
+            ...value.typeinfo.type,
+            pointers: value.typeinfo.type.pointers + 1
+          };
+          break;
+        case "*":
+          outputType = {
+            ...value.typeinfo.type,
+            pointers: value.typeinfo.type.pointers - 1
+          };
+          output = ctx.getVar({
+            offset: Number(value.value),
+            type: outputType,
+            creator: this
+          });
+          break;
+        case "~":
+          output = ~value.value;
+          outputType = value.typeinfo.type;
+          break;
+      }
+      ctx.pushAnonymous(outputType, output, this);
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.value, cb);
+    }
+    type(ctx) {
+      return typecheckUnaryOperation(ctx, this.d.op, this.d.value, this);
+    }
+    *checkInner(ctx) {
+      yield defaultExprCheck(this, ctx);
+    }
+    typeLValue(ctx) {
+      if (this.d.op !== "*") {
+        return typeErr(this, `This expression cannot be an lvalue.`);
+      }
+      return typecheckUnaryOperation(ctx, this.d.op, this.d.value, this);
+    }
+  };
+
+  // src/nodes/VariableDefinitionNode.tsx
+  var VariableDefinitionNode = class extends ParseNode {
+    debug() {
+      return `(let ${this.d.definition.debug()} ${autodebug(this.d.value)})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      const typeOfThisVar = ctx.types.get(this.d.definition.d.type.d.name);
+      if (!typeOfThisVar)
+        throw new ExecutionError(`The type '${this.d.definition.d.type.d.name}' does not exist.`, ctx);
+      let value = 0;
+      if (this.d.value) {
+        ctx = this.d.value.exec(ctx);
+        const thingToAssign = ctx.popTempValueAndGetBoth();
+        value = thingToAssign.value;
+      }
+      ctx.pushNamed({
+        definition: typeOfThisVar,
+        pointers: this.d.definition.d.type.d.pointers
+      }, value, this.d.definition.d.name, this);
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.definition, cb);
+      automap(this.d.value, cb);
+    }
+    *checkInner(ctx) {
+      yield this.d.definition.check(ctx);
+      yield this.d.value?.check(ctx);
+      const [fail, [type]] = organizeTypeErrors([ctx.getTypeFromName(this.d.definition.d.type)]);
+      yield fail?.why;
+      ctx.defineVariable(this.d.definition.d.name, type);
+    }
+  };
+
+  // src/nodes/DefinitionNode.tsx
+  var DefinitionNode = class extends ParseNode {
+    debug() {
+      return `(${this.d.type.debug()} ${this.d.name})`;
+    }
+    exec(ctx) {
+      throw new Error("Type definitions should not be exec()ed.");
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.type, cb);
+    }
+    *checkInner(ctx) {
+      yield this.d.type.check(ctx);
+    }
+  };
+
+  // src/nodes/ElseNode.tsx
+  var ElseNode = class extends ParseNode {
+    debug() {
+      return `(${autodebug(this.d.body)})`;
+    }
+    exec(ctx) {
+      ctx = ctx.clone(this);
+      ctx = handleStatementList(ctx, this.d.body).ctx;
+      return ctx;
+    }
+    mapInner(cb) {
+      automap(this.d.body, cb);
+    }
+    *checkInner(ctx) {
+      const checks = [];
+      ctx.withBlock(() => {
+        for (const stmt of this.d.body)
+          checks.push(...stmt.check(ctx));
+      });
+      yield checks;
+    }
+  };
+
+  // src/nodes/TypeAnnotationNode.tsx
+  var TypeAnnotationNode = class extends ParseNode {
+    debug() {
+      return `${this.d.struct ? "struct " : ""}${this.d.name} ${"".padStart(this.d.pointers, "*")}`;
+    }
+    exec(ctx) {
+      throw new Error("Type annotations should not be exec()ed.");
+      return ctx;
+    }
+    mapInner() {
+    }
+    *checkInner(ctx) {
+    }
+  };
+
+  // src/ast.tsx
+  function autodebug(node) {
+    if (Array.isArray(node)) {
+      return node.map((n) => n.debug()).join(" ");
+    } else if (node) {
+      return node.debug();
+    }
+    return "";
+  }
+  function handleStatementList(ctx, body) {
+    const top2 = ctx.stacktop();
+    ctx.pushBlock();
+    for (const stmt of body) {
+      ctx = stmt.exec(ctx);
+      if (top2.freed) {
+        return {
+          returned: true,
+          ctx
+        };
+      }
+    }
+    ctx.popBlock();
+    return {
+      returned: false,
+      ctx
+    };
+  }
+  function defaultExprCheck(expr, ctx) {
+    const type = expr.type(ctx);
+    if (type.success === true)
+      return [];
+    return type.why;
+  }
+  var ExecutionError = class extends Error {
+    constructor(msg, ctx) {
+      super(msg);
+      this.ctx = ctx;
+    }
+  };
+  function automap(node, callback) {
+    if (Array.isArray(node)) {
+      node.map((n) => n.map(callback));
+    } else if (node instanceof ParseNode) {
+      node.map(callback);
+    }
+  }
+
+  // src/allocate.tsx
+  function concatArrayBuffers(a, b) {
+    const concatted = new ArrayBuffer(a.byteLength + b.byteLength);
+    const byteArray = new Uint8Array(concatted);
+    const byteArrayA = new Uint8Array(a);
+    const byteArrayB = new Uint8Array(b);
+    for (let i = 0; i < byteArrayA.length; i++) {
+      byteArray[i] = byteArrayA[i];
+    }
+    for (let i = 0; i < byteArrayB.length; i++) {
+      byteArray[i + byteArrayA.length] = byteArrayB[i];
+    }
+    return concatted;
+  }
+  function allocateStringLiterals(ast, ctx) {
+    function recurse(n) {
+      if (n instanceof StringLiteralNode) {
+        const strbuf = new TextEncoder().encode(n.d.str + "\0");
+        n.d.pointer = ctx.mem.byteLength;
+        ctx.mem = concatArrayBuffers(ctx.mem, strbuf);
+      }
+    }
+    ast.map(recurse);
+  }
+
+  // src/parser.tsx
+  function getBindingPowerOfNextToken(s) {
+    const str = s.isNext(opRegex);
+    if (!str)
+      return 0;
+    return BindingPowers[str] ?? 0;
+  }
+  function enclose(start, muts, end, endErr, highlightEnds, callback) {
+    const items = [];
+    while (!muts.isNext(end)) {
+      const item = callback(muts);
+      if (item instanceof ErrorNode)
+        return item;
+      items.push(item);
+    }
+    if (!muts.expect(end, highlightEnds))
+      return muts.err(start, endErr);
+    return items;
+  }
+  function parseTypeAnnotation(s) {
+    const muts = s.mut();
+    const struct = !!muts.expect("struct", "keyword");
+    const unsigned = struct ? void 0 : muts.expect("unsigned", "type");
+    let name2 = muts.expect(identRegex, "type");
+    if (!name2)
+      return muts.err(s, "Expected a type name.");
+    if (unsigned)
+      name2 = `unsigned ${name2}`;
+    let pointers = 0;
+    while (muts.isNext("*")) {
+      muts.expect("*", "operator");
+      pointers++;
+    }
+    return new TypeAnnotationNode(s, muts.current(), {
+      struct,
+      name: name2,
+      pointers
+    });
+  }
+  function parseDefinition(s) {
+    const muts = s.mut();
+    const type = muts.parse(parseTypeAnnotation, 0);
+    if (type instanceof ErrorNode)
+      return type;
+    const name2 = muts.expect(identRegex, "identifier");
+    if (!name2)
+      return muts.err(s, "Expected an identifier.");
+    return new DefinitionNode(s, muts.current(), {
+      type,
+      name: name2
+    });
+  }
+  function parseStatementList(s) {
+    const muts = s.mut();
+    const body = [];
+    while (true) {
+      const stmt = muts.parse(parseStatement, 0);
+      if (stmt instanceof ErrorNode)
+        break;
+      body.push(stmt);
+      if (requiresSemicolon(stmt) && !muts.expect(";", "semicolon"))
+        return muts.err(s, "Expected ';'");
+    }
+    return new StatementListNode(s, muts.current(), {
+      body
+    });
+  }
+  function getCondition(start, muts) {
+    if (!muts.expect("(", "bracket"))
+      return muts.err(start, "Expected '('");
+    const condition = muts.parse(parseExpr, 0);
+    if (!muts.expect(")", "bracket"))
+      return muts.err(start, "Expected ')'");
+    return condition;
+  }
+  function parseLoop(s) {
+    const muts = s.mut();
+    return muts.match([["for", "keyword", () => {
+      if (!muts.expect("(", "bracket"))
+        return muts.err(s, "Expected '('");
+      let start, iter;
+      let condition;
+      if (!muts.isNext(";")) {
+        start = muts.parse(parseStatement, 0);
+      }
+      if (!muts.expect(";", "semicolon"))
+        return muts.err(s, "Expected ';'");
+      if (!muts.isNext(";")) {
+        condition = muts.parse(parseExpr, 0);
+      }
+      if (!muts.expect(";", "semicolon"))
+        return muts.err(s, "Expected ';'");
+      if (!muts.isNext(")")) {
+        iter = muts.parse(parseStatement, 0);
+      }
+      if (!muts.expect(")", "bracket"))
+        return muts.err(s, "Expected ')'");
+      const body = parseCurlyBracesDelimitedBody(s, muts);
+      if (body instanceof ErrorNode)
+        return body;
+      return new LoopNode(s, muts.current(), {
+        body,
+        conditions: {
+          type: "for",
+          start,
+          condition,
+          iter
+        }
+      });
+    }], ["while", "keyword", () => {
+      const condition = getCondition(s, muts);
+      if (condition instanceof ErrorNode)
+        return condition;
+      const body = parseCurlyBracesDelimitedBody(s, muts);
+      if (body instanceof ErrorNode)
+        return body;
+      return new LoopNode(s, muts.current(), {
+        conditions: {
+          type: "while",
+          condition
+        },
+        body
+      });
+    }]], () => muts.err(s, "Expected 'for' or 'while'."));
+  }
+  function parseIfElseStatement(s) {
+    let muts = s.mut();
+    return muts.match([["if", "keyword", () => {
+      const condition = getCondition(s, muts);
+      if (condition instanceof ErrorNode)
+        return condition;
+      const body = parseCurlyBracesDelimitedBody(s, muts);
+      if (body instanceof ErrorNode)
+        return body;
+      let elseif;
+      if (muts.isNext("else")) {
+        elseif = muts.parse(parseIfElseStatement, 0);
+      }
+      return new IfNode(s, muts.current(), {
+        condition,
+        body,
+        elseif
+      });
+    }], ["else", "keyword", () => {
+      if (muts.isNext("if"))
+        return muts.parse(parseIfElseStatement, 0);
+      const body = parseCurlyBracesDelimitedBody(s, muts);
+      if (body instanceof ErrorNode)
+        return body;
+      return new ElseNode(s, muts.current(), {
+        body
+      });
+    }]], () => muts.err(s, "Expected 'if'."));
+  }
+  function parseCurlyBracesDelimitedBody(start, muts) {
+    if (!muts.expect("{", "bracket"))
+      return muts.err(start, "Expected '{'");
+    return enclose(start, muts, "}", "Expected '}'", "bracket", (muts2) => {
+      const stmt = muts2.parse(parseStatement, 0);
+      if (stmt instanceof ErrorNode)
+        return stmt;
+      if (requiresSemicolon(stmt) && !muts2.expect(";", "semicolon"))
+        return muts2.err(start, "Expected ';'");
+      return stmt;
+    });
+  }
+  function parseStatement(s) {
+    let muts = s.mut();
+    if (muts.expect("return", "keyword")) {
+      let expr = muts.parse(parseExpr, 0);
+      if (expr instanceof ErrorNode && muts.isNext(";"))
+        expr = void 0;
+      if (expr instanceof ErrorNode)
+        return expr;
+      return new ReturnStatementNode(s, muts.current(), {
+        expr
+      });
+    }
+    if (muts.expect("struct", "keyword")) {
+      const name2 = muts.expect(identRegex, "identifier");
+      if (!name2)
+        return muts.err(s, "Expected an identifier.");
+      if (!muts.expect("{", "bracket"))
+        return muts.err(s, "Expected '{'");
+      const fields = enclose(s, muts, "}", "Expected '}'", "bracket", (muts2) => {
+        const def2 = muts2.parse(parseDefinition, 0);
+        if (!muts2.expect(";", "semicolon"))
+          return muts2.err(s, "Expected ';'");
+        return def2;
+      });
+      if (fields instanceof ErrorNode)
+        return fields;
+      return new StructDefinitionNode(s, muts.current(), {
+        fields,
+        name: name2
+      });
+    }
+    muts = s.mut();
+    const def = muts.parse(parseDefinition, 0);
+    if (def instanceof DefinitionNode && muts.isNext(";")) {
+      return new VariableDefinitionNode(s, muts.current(), {
+        definition: def
+      });
+    }
+    if (def instanceof ErrorNode) {
+      muts = s.mut();
+      if (muts.isNext("if")) {
+        const ifStmt = muts.parse(parseIfElseStatement, 0);
+        return ifStmt;
+      }
+      if (muts.isNext("for") || muts.isNext("while")) {
+        const loop = muts.parse(parseLoop, 0);
+        return loop;
+      }
+      const assignment = (() => {
+        muts = s.mut();
+        const left = muts.parse(parseExpr, 0);
+        if (left instanceof ErrorNode)
+          return;
+        const opEquals = muts.expect(opEqualsRegex, "operator");
+        if (!opEquals)
+          return;
+        const op = opEquals === "=" ? void 0 : opEquals.slice(0, 1);
+        const right = muts.parse(parseExpr, 0);
+        if (right instanceof ErrorNode)
+          return;
+        return new AssignmentNode(s, muts.current(), {
+          left,
+          op,
+          right
+        });
+      })();
+      if (!assignment)
+        return parseExpr(s);
+      return assignment;
+    }
+    return muts.match([["(", "bracket", () => {
+      const args = enclose(s, muts, ")", "Expected ')'", "bracket", (muts2) => {
+        const def2 = muts2.parse(parseDefinition, 0);
+        if (!muts2.expect(",", "operator") && !muts2.isNext(")"))
+          return muts2.err(s, "Expected ','");
+        return def2;
+      });
+      if (args instanceof ErrorNode)
+        return args;
+      const body = parseCurlyBracesDelimitedBody(s, muts);
+      if (body instanceof ErrorNode)
+        return body;
+      return new FunctionDefNode(s, muts.current(), {
+        returnTypeAndName: def,
+        args,
+        body
+      });
+    }], ["=", "operator", (name2) => {
+      const value = muts.parse(parseExpr, 0);
+      if (value instanceof ErrorNode)
+        return value;
+      return new VariableDefinitionNode(s, muts.current(), {
+        value,
+        definition: def
+      });
+    }], [";", "semicolon", () => {
+      return new VariableDefinitionNode(s, muts.current(), {
+        definition: def
+      });
+    }]], () => {
+      return parseExpr(s);
+    });
+    return parseExpr(s);
+  }
+  function parseExpr(s) {
+    let left = parseInitExpr(s);
+    if (left instanceof ErrorNode)
+      return left;
+    let currentSrc = left.end;
+    while (true) {
+      const nextBindingPower = getBindingPowerOfNextToken(currentSrc);
+      if (nextBindingPower <= s.bindingPower())
+        break;
+      const consequent = parseConsequentExpr(left.setBindingPower(nextBindingPower));
+      if (consequent instanceof ErrorNode)
+        break;
+      left = consequent;
+    }
+    return left;
+  }
+  function decodeString(str) {
+    let decodedStr = "";
+    for (let i = 0; i < str.length; i++) {
+      if (str[i] === "\\") {
+        switch (str[++i]) {
+          case "t":
+          case "r":
+          case "n":
+          case "0":
+          case "\\":
+            decodedStr += {
+              t: "	",
+              r: "\r",
+              n: "\n",
+              "0": "\0",
+              "\\": "\\"
+            }[str[i]];
+            break;
+          case "x": {
+            const num = parseInt(str[++i] + str[++i], 16);
+            decodedStr += String.fromCharCode(num);
+            break;
+          }
+          case "u": {
+            const num = parseInt(str[++i] + str[++i] + str[++i] + str[++i], 16);
+            decodedStr += String.fromCharCode(num);
+            break;
+          }
+        }
+      } else {
+        decodedStr += str[i];
+      }
+    }
+    return decodedStr;
+  }
+  function parseInitExpr(s) {
+    let muts = s.mut();
+    return muts.match([
+      // char literal
+      [charLiteralRegex, "string", (str) => {
+        const char = decodeString(str.slice(1, -1));
+        return new NumberNode(s, muts.current(), {
+          num: Number(char.charCodeAt(0)),
+          type: "i",
+          bytes: 1
+        });
+      }],
+      // string literal
+      [stringLiteralRegex, "string", (inputStr) => {
+        const str = decodeString(inputStr.slice(1, -1));
+        return new StringLiteralNode(s, muts.current(), {
+          str,
+          pointer: 0
+        });
+      }],
+      // unary op
+      [unaryOpRegex, "operator", (op) => {
+        const value = muts.parse(parseExpr, UnaryBindingPowers[op]);
+        return new UnaryOpNode(s, muts.current(), {
+          value,
+          op
+        });
+      }],
+      // parenthesized
+      ["(", "bracket", () => {
+        let beforeTypecast = muts.current();
+        const typecast = muts.parse(parseTypeAnnotation, 0);
+        if (typecast instanceof TypeAnnotationNode) {
+          const typecastNode = (() => {
+            if (!muts.expect(")", "bracket"))
+              return;
+            const value = muts.parse(parseExpr, 150);
+            if (value instanceof ErrorNode)
+              return;
+            return new TypecastNode(s, muts.current(), {
+              type: typecast,
+              value
+            });
+          })();
+          if (typecastNode)
+            return typecastNode;
+        }
+        muts = beforeTypecast.mut();
+        const expr = muts.parse(parseExpr, 0);
+        if (!muts.expect(")", "bracket"))
+          return muts.err(s, "Expected ')'.");
+        return expr.setParserPointer(muts.current());
+      }],
+      // number
+      [numberRegex, "number", (num) => {
+        const numtype = muts.expect(numberTypeRegex, "number") ?? (num.includes(".") ? "f" : "i");
+        return new NumberNode(s, muts.current(), {
+          num: Number(num),
+          type: numtype
+        });
+      }],
+      [identRegex, "identifier", (ident) => {
+        return muts.match(
+          [
+            // function call
+            ["(", "bracket", () => {
+              let args = [];
+              while (!muts.isNext(")")) {
+                const arg = muts.parse(parseExpr, 0);
+                args.push(arg);
+                if (!muts.expect(",", "comma"))
+                  break;
+              }
+              if (!muts.expect(")", "bracket")) {
+                seek(s, muts, ")", "bracket", "Expected a ')'");
+                args.push(muts.err(s, "Malformed function argument(s)."));
+              }
+              return new FunctionCallNode(s, muts.current(), {
+                args,
+                name: ident
+              });
+            }]
+          ],
+          // identifier
+          () => new IdentifierNode(s, muts.current(), {
+            name: ident
+          })
+        );
+      }]
+    ], () => muts.err(s, "Expected a number or an identifier."));
+  }
+  function parseConsequentExpr(left) {
+    const muts = left.end.mut();
+    console.log(left.text());
+    return muts.match([
+      // binary op
+      [opRegex, "operator", (op) => {
+        console.log("found op", op);
+        const bp = getBindingPowerOfNextToken(left.end);
+        const right = muts.parse(parseExpr, bp);
+        return new BinaryOpNode(left.start, muts.current(), {
+          left,
+          right,
+          op
+        });
+      }]
+    ], () => muts.err(left.start, "Expected a binary operator."));
+  }
+
+  // src/runtime/run.tsx
+  function retrieveNullTerminatedString(mem, i) {
+    const uint8array = new Uint8Array(mem);
+    const dst = [];
+    while (uint8array[i] != 0) {
+      dst.push(uint8array[i++]);
+    }
+    return new Uint8Array(dst).buffer;
+  }
+  var defaultFunctions = /* @__PURE__ */ new Map([["putc", {
+    args: [{
+      definition: DefaultPrimitives.int,
+      pointers: 0
+    }],
+    returns: {
+      definition: DefaultPrimitives.int,
+      pointers: 0
+    }
+  }]]);
+  function parse(code) {
+    const parseInput = new ParseInput(code, 0, 0);
+    const tree = parseStatementList(parseInput);
+    const errors = tree.check(new TypecheckContext(DefaultTypes, defaultFunctions));
+    return {
+      tree,
+      errors,
+      highlights: tree.end.highlights()
+    };
+  }
+  function run(code) {
+    const parseInput = new ParseInput(code, 0, 0);
+    const tree = parseStatementList(parseInput);
+    const errors = tree.check(new TypecheckContext(DefaultTypes, defaultFunctions));
+    if (errors.length > 0)
+      return {
+        type: "error",
+        errors,
+        highlights: tree.end.highlights()
+      };
+    const globalMem = {
+      mem: new ArrayBuffer(0)
+    };
+    allocateStringLiterals(tree, globalMem);
+    const finalState = tree.exec(new ExecutionContext({
+      littleEndian: true,
+      memory: concatArrayBuffers(globalMem.mem, new ArrayBuffer(256)),
+      stdout: "",
+      stack: [{
+        blocks: [{
+          bindings: /* @__PURE__ */ new Map()
+        }],
+        base: globalMem.mem.byteLength,
+        bindings: /* @__PURE__ */ new Map(),
+        temporaries: [],
+        functionDefinitions: /* @__PURE__ */ new Map([["printf", {
+          type: "external",
+          def(ctx, call) {
+            const args = call.d.args;
+            ctx = ctx.clone(call);
+            ctx = args[0].exec(ctx);
+            const value = ctx.popTempValueAndGetData();
+            const text = new TextDecoder().decode(retrieveNullTerminatedString(ctx.memory, value));
+            ctx.stdout += text;
+            return ctx;
+          }
+        }], ["putc", {
+          type: "external",
+          def(ctx, call) {
+            const args = call.d.args;
+            ctx = ctx.clone(call);
+            ctx = args[0].exec(ctx);
+            const value = ctx.popTempValueAndGetData();
+            ctx.stdout += String.fromCharCode(Number(value));
+            return ctx;
+          }
+        }]]),
+        freed: false,
+        returnType: {
+          definition: DefaultPrimitives.int,
+          pointers: 0
+        },
+        argc: 0
+      }],
+      esp: globalMem.mem.byteLength,
+      types: DefaultTypes
+    }));
+    return {
+      type: "success",
+      finalState,
+      highlights: tree.end.highlights()
+    };
+  }
+
   // src/ui/CodeEditor.tsx
   var _tmpl$ = /* @__PURE__ */ template(`<div class=code-editor>`);
   var HL2Tag = {
@@ -20163,6 +20191,23 @@
       return diagnostics;
     });
   }
+  function pointersExecutorHighlighterPlugin(exec) {
+    let decorations2 = RangeSet.of([]);
+    return ViewPlugin.define((view) => {
+      return {
+        update(update) {
+          console.log("Exec", exec, exec.executor.start.position(), exec.executor.end.position());
+          decorations2 = RangeSet.of(exec && exec.executor ? [Decoration.mark({
+            class: "currently-executing-highlight"
+          }).range(exec.executor.start.position(), exec.executor.end.position())] : []);
+        }
+      };
+    }, {
+      decorations(update) {
+        return decorations2;
+      }
+    });
+  }
   function CodeEditor(props) {
     return (() => {
       const _el$ = _tmpl$();
@@ -20174,12 +20219,14 @@
             const docstring = v.state.doc.toString();
             props.setCode(docstring);
           }
-        }), pointerSyntaxHighlighterPlugin(), pointersDiagnosticPlugin(), EditorView.editable.of(!props.isRunning())];
+        }), pointerSyntaxHighlighterPlugin(), pointersDiagnosticPlugin(), EditorView.editable.of(!props.isRunning()), pointersExecutorHighlighterPlugin(props.exec())];
         const state = EditorState.create({
           doc: props.code(),
           extensions: extensions()
         });
         createEffect(() => {
+          props.isRunning();
+          props.exec();
           untrack(() => {
             view.setState(EditorState.create({
               doc: props.code(),
@@ -20284,7 +20331,9 @@
   }
 
   // src/ui/Page.tsx
-  var _tmpl$4 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><button class=run-button></button><span class=run-feedback></span></div><pre class=code-output>`);
+  var _tmpl$4 = /* @__PURE__ */ template(`<button>Back`);
+  var _tmpl$23 = /* @__PURE__ */ template(`<button>Forward`);
+  var _tmpl$32 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><button class=run-button></button><span class=run-feedback></span></div><pre class=code-output>`);
   var DEFAULTCODE = `int printstr(char * str) {
     while (*str != '\\0') {
         putc(*str);
@@ -20317,22 +20366,23 @@ printnum(123456);
 `;
   function Page() {
     const [code, setCode] = createSignal(DEFAULTCODE);
-    const [output2, setOutput] = createSignal(run(code()));
+    const [output, setOutput] = createSignal(run(code()));
     const [exec, setExec] = createSignal();
     const [isRunning, setIsRunning] = createSignal(false);
     return (() => {
-      const _el$ = _tmpl$4(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.nextSibling, _el$6 = _el$3.nextSibling;
+      const _el$ = _tmpl$32(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.nextSibling, _el$8 = _el$3.nextSibling;
       insert(_el$, createComponent(CodeEditor, {
         code,
         setCode,
-        isRunning
+        isRunning,
+        exec
       }), _el$2);
       _el$4.$$click = () => {
         setIsRunning(!isRunning());
         if (isRunning()) {
           console.log(parse(code()));
           setOutput(run(code()));
-          const o = output2().finalState;
+          const o = output().finalState;
           console.log("FINALSTATE", o);
           if (o)
             setExec(o);
@@ -20341,36 +20391,52 @@ printnum(123456);
         }
       };
       insert(_el$4, () => isRunning() ? "Stop" : "Run");
-      insert(_el$5, () => output2().type === "error" ? "Error" : "Success");
-      insert(_el$6, (() => {
-        const _c$ = createMemo(() => output2().type === "success");
-        return () => _c$() ? output2().finalState.stdout : output2().errors.map((err) => formatDiagnostic(err)).join("\n");
+      insert(_el$5, () => output().type === "error" ? "Error" : "Success");
+      insert(_el$3, createComponent(Show, {
+        get when() {
+          return exec();
+        },
+        get children() {
+          return [(() => {
+            const _el$6 = _tmpl$4();
+            _el$6.$$click = () => {
+              const prev = exec().prev;
+              if (prev)
+                setExec(prev);
+            };
+            return _el$6;
+          })(), (() => {
+            const _el$7 = _tmpl$23();
+            _el$7.$$click = () => {
+              const next = exec().next;
+              if (next)
+                setExec(next);
+            };
+            return _el$7;
+          })()];
+        }
+      }), null);
+      insert(_el$8, (() => {
+        const _c$ = createMemo(() => output().type === "success");
+        return () => _c$() ? output().finalState.stdout : output().errors.map((err) => formatDiagnostic(err)).join("\n");
       })());
-      insert(_el$, (() => {
-        const _c$2 = createMemo(() => !!exec());
-        return () => _c$2() && createComponent(MemoryViewPanel, {
-          output: exec
-        });
-      })(), null);
-      createRenderEffect(() => (output2().type === "error" ? "red" : "green") != null ? _el$5.style.setProperty("color", output2().type === "error" ? "red" : "green") : _el$5.style.removeProperty("color"));
+      insert(_el$, createComponent(Show, {
+        get when() {
+          return exec();
+        },
+        get children() {
+          return createComponent(MemoryViewPanel, {
+            output: exec
+          });
+        }
+      }), null);
+      createRenderEffect(() => (output().type === "error" ? "red" : "green") != null ? _el$5.style.setProperty("color", output().type === "error" ? "red" : "green") : _el$5.style.removeProperty("color"));
       return _el$;
     })();
   }
   delegateEvents(["click"]);
 
   // src/index.tsx
-  var TEST3 = `
-int x;
-for (x = 65; x < 91; x += 1) {
-    putc(x);
-}
-`;
-  var output = run(TEST3);
-  if (output.type === "success") {
-    console.log(output);
-  } else {
-    console.log(output.errors.map((err) => formatDiagnostic(err)).join("\n"));
-  }
   render(() => {
     return createComponent(Page, {});
   }, document.getElementById("main"));

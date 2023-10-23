@@ -130,6 +130,7 @@ export class ExecutionContext {
   next?: ExecutionContext;
   stack: StackFrame[];
   stdout: string;
+  executor: ParseNode<any>;
 
   constructor(
     opts: {
@@ -152,6 +153,7 @@ export class ExecutionContext {
     this.esp = opts.esp;
     this.stdout = opts.stdout;
     if (this.prev) this.prev.next = this;
+    this.executor = executor;
   }
 
   getvar(name: string) {
@@ -316,7 +318,6 @@ export class ExecutionContext {
     value: number | bigint | ArrayBuffer,
     creator: ParseNode<any>
   ) {
-    console.log("pushanon", creator);
     const instance = this._push(type, value, creator);
 
     this.stacktop().temporaries.push(instance);
