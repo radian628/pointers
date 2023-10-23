@@ -17915,7 +17915,7 @@
   var stringLiteralWithEscapeCodesAnd = (strs) => ["\\\\(n|t|r|0|\\\\)", `\\\\x${hexDigit}{2}`, `\\\\u${hexDigit}{4}`, ...strs].join("|");
   var charLiteralRegex = new RegExp(`'(${stringLiteralWithEscapeCodesAnd(["[^']"])})'`);
   var stringLiteralRegex = new RegExp(`"(${stringLiteralWithEscapeCodesAnd(['[^"]'])})*"`);
-  var numberRegex = /[0-9]+(\.[0-9]*)?/;
+  var numberRegex = /\-?[0-9]+(\.[0-9]*)?/;
   var identRegex = /[a-zA-Z_][a-zA-Z0-9_]*/;
   var skipRegex = /[ \r\t\n]+/;
   function escapeRegex(string2) {

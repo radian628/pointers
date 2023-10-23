@@ -14,7 +14,7 @@ export const charLiteralRegex = new RegExp(
 export const stringLiteralRegex = new RegExp(
   `"(${stringLiteralWithEscapeCodesAnd(['[^"]'])})*"`
 );
-export const numberRegex = /[0-9]+(\.[0-9]*)?/;
+export const numberRegex = /\-?[0-9]+(\.[0-9]*)?/;
 export const identRegex = /[a-zA-Z_][a-zA-Z0-9_]*/;
 export const skipRegex = /[ \r\t\n]+/;
 
