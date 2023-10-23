@@ -142,8 +142,6 @@ export class FunctionDefNode extends ParseNode<{
       }
     });
 
-    console.log("fnchecks", checks);
-
     yield checks;
   }
 }

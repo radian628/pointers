@@ -23,7 +23,6 @@ export class ErrorNode
   }
 
   *checkInner(ctx: TypecheckContext) {
-    console.log("got here!", defaultExprCheck(this, ctx));
     yield defaultExprCheck(this, ctx);
   }
 

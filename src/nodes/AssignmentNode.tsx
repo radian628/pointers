@@ -59,8 +59,6 @@ export class AssignmentNode extends ParseNode<{
 
     const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
 
-    console.log(errs);
-
     yield errs?.why;
 
     // TODO: ensure that rtype is assignable to ltype

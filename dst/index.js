@@ -18102,7 +18102,6 @@
       this.stacktop().temporaries.push(instance);
     }
     pushNamed(type, value, name2, creator) {
-      console.log(name2, value);
       const instance = this._push(type, value, creator);
       const binding = {
         ...instance,
@@ -18913,7 +18912,6 @@
       const mltype = this.d.left.typeLValue(ctx);
       const mrtype = this.d.right.type(ctx);
       const [errs, [ltype, rtype]] = organizeTypeErrors([mltype, mrtype]);
-      console.log(errs);
       yield errs?.why;
     }
   };
@@ -18939,7 +18937,6 @@
       };
     }
     *checkInner(ctx) {
-      console.log("got here!", defaultExprCheck(this, ctx));
       yield defaultExprCheck(this, ctx);
     }
     checkLValue(ctx) {
@@ -19091,7 +19088,6 @@
           checks.push(...stmt.check(ctx));
         }
       });
-      console.log("fnchecks", checks);
       yield checks;
     }
   };
@@ -19126,7 +19122,6 @@
     }
     type(ctx) {
       const t2 = ctx.getVariableType(this);
-      console.log(t2);
       return t2;
     }
     *checkInner(ctx) {
@@ -20292,7 +20287,6 @@
   var _tmpl$22 = /* @__PURE__ */ template(`<div>+`);
   var _tmpl$3 = /* @__PURE__ */ template(`<div class=memory-view-panel><div class=memory-cell-container>`);
   function getAllVariableBindings(ctx) {
-    console.log("getallbindings,", ctx);
     return ctx.stack.map((frame) => frame.temporaries.map((t2) => ({
       variable: t2,
       name: void 0
@@ -20303,7 +20297,6 @@
   }
   function generateVariableMemoryMap(ctx) {
     const allBindings = getAllVariableBindings(ctx);
-    console.log("ALLBINDINGS", allBindings);
     const largestAddress = Math.max(...allBindings.map((b) => b.variable.offset + ctx.sizeof(b.variable.type)));
     const metadata = [];
     const memArray = new Uint8Array(ctx.memory);
@@ -20358,9 +20351,6 @@
   }
   function MemoryViewPanel(props) {
     const memVarMap = () => generateVariableMemoryMap(props.output());
-    createEffect(() => {
-      console.log(memVarMap());
-    });
     return (() => {
       const _el$9 = _tmpl$3(), _el$10 = _el$9.firstChild;
       _el$9.addEventListener("mouseleave", () => {

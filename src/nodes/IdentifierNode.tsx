@@ -56,7 +56,6 @@ export class IdentifierNode
 
   type(ctx: TypecheckContext): MaybeType {
     const t = ctx.getVariableType(this);
-    console.log(t);
     return t;
   }
 

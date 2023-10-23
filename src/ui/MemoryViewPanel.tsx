@@ -18,7 +18,6 @@ type MemoryCellMetadata = {
 };
 
 function getAllVariableBindings(ctx: ExecutionContext) {
-  console.log("getallbindings,", ctx);
   return ctx.stack
     .map((frame) =>
       frame.temporaries
@@ -35,8 +34,6 @@ function getAllVariableBindings(ctx: ExecutionContext) {
 
 function generateVariableMemoryMap(ctx: ExecutionContext) {
   const allBindings = getAllVariableBindings(ctx);
-
-  console.log("ALLBINDINGS", allBindings);
 
   const largestAddress = Math.max(
     ...allBindings.map((b) => b.variable.offset + ctx.sizeof(b.variable.type))
@@ -112,10 +109,6 @@ export function MemoryViewPanel(props: {
   setNodeHighlights: (hl: ParseNode<any>[]) => void;
 }) {
   const memVarMap = () => generateVariableMemoryMap(props.output());
-
-  createEffect(() => {
-    console.log(memVarMap());
-  });
 
   return (
     <div

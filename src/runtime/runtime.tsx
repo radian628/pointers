@@ -358,8 +358,6 @@ export class ExecutionContext {
     name: string,
     creator: ParseNode<any>
   ) {
-    console.log(name, value);
-
     const instance = this._push(type, value, creator);
 
     const binding = {
