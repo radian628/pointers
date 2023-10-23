@@ -6,6 +6,7 @@ import { RunState, parse, run } from "../runtime/run";
 import { formatDiagnostic } from "../typecheck";
 import { MemoryViewPanel } from "./MemoryViewPanel";
 import { ExecutionContext } from "../runtime/runtime";
+import { ParseNode } from "../parser-utils";
 
 const DEFAULTCODE = `int printstr(char * str) {
     while (*str != '\\0') {
@@ -37,7 +38,6 @@ printstr("    intended to teach you how pointers work!\\n");
 printstr("You can print numbers too: ");
 printnum(123456);
 `;
-
 export function Page() {
   const [code, setCode] = createSignal(DEFAULTCODE);
 
@@ -47,6 +47,10 @@ export function Page() {
 
   const [isRunning, setIsRunning] = createSignal(false);
 
+  const [nodeHighlights, setNodeHighlights] = createSignal<ParseNode<any>[]>(
+    []
+  );
+
   return (
     <div class="page">
       <CodeEditor
@@ -54,52 +58,71 @@ export function Page() {
         setCode={setCode}
         isRunning={isRunning}
         exec={exec}
+        nodeHighlights={nodeHighlights}
       ></CodeEditor>
       <div class="code-output-panel">
         <div class="run-panel">
-          <button
-            class="run-button"
-            onClick={() => {
-              setIsRunning(!isRunning());
-              if (isRunning()) {
-                console.log(parse(code()));
-                setOutput(run(code()));
-                const o = output().finalState;
-                console.log("FINALSTATE", o);
-                if (o) setExec(o);
-              } else {
-                setExec();
-              }
-            }}
-          >
-            {isRunning() ? "Stop" : "Run"}
-          </button>
-          <span
-            class="run-feedback"
-            style={{
-              color: output().type === "error" ? "red" : "green",
-            }}
-          >
-            {output().type === "error" ? "Error" : "Success"}
-          </span>
-          <Show when={exec()}>
+          <div class="run-row">
             <button
+              class="menu-button"
               onClick={() => {
-                const prev = exec().prev;
-                if (prev) setExec(prev);
+                setIsRunning(!isRunning());
+                if (isRunning()) {
+                  setOutput(run(code()));
+                  const o = output().finalState;
+                  if (o) setExec(o);
+                } else {
+                  setExec();
+                }
               }}
             >
-              Back
+              {isRunning() ? "Stop" : "Run"}
             </button>
-            <button
-              onClick={() => {
-                const next = exec().next;
-                if (next) setExec(next);
+            <span
+              class="run-feedback"
+              style={{
+                color: output().type === "error" ? "red" : "green",
               }}
             >
-              Forward
-            </button>
-          </Show>
+              {output().type === "error" ? "Error" : "Success"}
+            </span>
+          </div>
+          <div class="run-row">
+            <Show when={exec() && output().finalState}>
+              <button
+                class="menu-button"
+                onClick={() => {
+                  const prev = exec().prev;
+                  if (prev) setExec(prev);
+                }}
+              >
+                Back
+              </button>
+              <button
+                class="menu-button"
+                onClick={() => {
+                  const next = exec().next;
+                  if (next) setExec(next);
+                }}
+              >
+                Forward
+              </button>
+              {"  "}(
+              <input
+                class="exec-index"
+                type="number"
+                min={1}
+                max={output().finalState.getindex()}
+                value={exec().getindex()}
+                onInput={(e) => {
+                  const value = Number(e.target.value);
+
+                  setExec(exec().seekindex(value));
+                }}
+              ></input>{" "}
+              / {output().finalState.getindex()})
+            </Show>
+          </div>
         </div>
         <pre class="code-output">
           {output().type === "success"
@@ -110,7 +133,10 @@ export function Page() {
         </pre>
       </div>
       <Show when={exec()}>
-        <MemoryViewPanel output={exec}></MemoryViewPanel>
+        <MemoryViewPanel
+          output={exec}
+          setNodeHighlights={setNodeHighlights}
+        ></MemoryViewPanel>
       </Show>
     </div>
   );

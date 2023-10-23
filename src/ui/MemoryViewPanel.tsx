@@ -14,9 +14,11 @@ type VariableMemoryCorrespondence = {
 type MemoryCellMetadata = {
   variables: VariableMemoryCorrespondence[];
   value: number;
+  i: number;
 };
 
 function getAllVariableBindings(ctx: ExecutionContext) {
+  console.log("getallbindings,", ctx);
   return ctx.stack
     .map((frame) =>
       frame.temporaries
@@ -34,7 +36,7 @@ function getAllVariableBindings(ctx: ExecutionContext) {
 function generateVariableMemoryMap(ctx: ExecutionContext) {
   const allBindings = getAllVariableBindings(ctx);
 
-  console.log(allBindings);
+  console.log("ALLBINDINGS", allBindings);
 
   const largestAddress = Math.max(
     ...allBindings.map((b) => b.variable.offset + ctx.sizeof(b.variable.type))
@@ -48,6 +50,7 @@ function generateVariableMemoryMap(ctx: ExecutionContext) {
     metadata.push({
       variables: [],
       value: memArray[i],
+      i,
     });
   }
 
@@ -68,55 +71,67 @@ function generateVariableMemoryMap(ctx: ExecutionContext) {
 export function getVarName(c: VariableMemoryCorrespondence) {
   if (c.name) return c.name;
 
-  console.log(c);
-
   if (!c.creator) return;
 
-  const start = getLineAndCol(
-    c.creator.start.text(),
-    c.creator.start.position()
-  );
-  const end = getLineAndCol(c.creator.end.text(), c.creator.end.position());
-
-  return start.line == end.line
-    ? `(${start.line}:${start.col} - ${end.col})`
-    : `(${start.line}:${start.col} - ${end.line}:${end.col})`;
+  return "TEMP";
 }
 
-export function MemoryCell(props: { value: () => MemoryCellMetadata }) {
+export function MemoryCell(props: {
+  value: () => MemoryCellMetadata;
+  setNodeHighlights: (hl: ParseNode<any>[]) => void;
+}) {
   return (
-    <div class="memory-cell">
-      <div class="memory-cell-value">
-        0x{props.value().value.toString(16).padStart(2, "0")} (
-        {String.fromCharCode(props.value().value)})
-      </div>
-      <div class="memory-cell-variables">
-        <For each={props.value().variables}>
-          {(v) => (
-            <div>
-              {getVarName(v)}+{v.offset}
-            </div>
-          )}
-        </For>
+    <div
+      class="memory-cell"
+      onMouseEnter={() => {
+        props.setNodeHighlights(props.value().variables.map((v) => v.creator));
+      }}
+    >
+      <div class="memory-cell-addr">{props.value().i.toString(16)}</div>
+      <div class="memory-cell-contents">
+        <div class="memory-cell-value">
+          {props.value().value.toString(16).padStart(2, "0")}{" "}
+          {String.fromCharCode(props.value().value)}
+        </div>
+        <div class="memory-cell-variables">
+          <For each={props.value().variables}>
+            {(v) => (
+              <div>
+                {getVarName(v)}+{v.offset}
+              </div>
+            )}
+          </For>
+        </div>
       </div>
     </div>
   );
 }
 
-export function MemoryViewPanel(props: { output: () => ExecutionContext }) {
-  const memVarMap = createMemo(() => {
-    return generateVariableMemoryMap(props.output());
-  });
+export function MemoryViewPanel(props: {
+  output: () => ExecutionContext;
+  setNodeHighlights: (hl: ParseNode<any>[]) => void;
+}) {
+  const memVarMap = () => generateVariableMemoryMap(props.output());
 
   createEffect(() => {
-    console.log("VARMAP", memVarMap());
+    console.log(memVarMap());
   });
 
   return (
-    <div class="memory-view-panel">
+    <div
+      class="memory-view-panel"
+      onMouseLeave={() => {
+        props.setNodeHighlights([]);
+      }}
+    >
       <div class="memory-cell-container">
         <For each={memVarMap()}>
-          {(cell) => <MemoryCell value={() => cell}></MemoryCell>}
+          {(cell) => (
+            <MemoryCell
+              setNodeHighlights={props.setNodeHighlights}
+              value={() => cell}
+            ></MemoryCell>
+          )}
         </For>
       </div>
     </div>

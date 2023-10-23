@@ -918,6 +918,14 @@
       }
     }
   }
+  function setAttribute(node, name2, value) {
+    if (sharedConfig.context)
+      return;
+    if (value == null)
+      node.removeAttribute(name2);
+    else
+      node.setAttribute(name2, value);
+  }
   function use(fn, element, arg) {
     return untrack(() => fn(element, arg));
   }
@@ -17916,7 +17924,6 @@
   var opSymbols = ["+", "-", "*", "/", "||", "&&", "^^", "==", "!=", ">=", "<=", ">", "<", "&", "|", "^", "<<", ">>", ".", "->", "%"];
   var opRegex = new RegExp(`(${opSymbols.map((s) => escapeRegex(s)).join("|")})(?!=)`);
   var opEqualsRegex = new RegExp(`(${opSymbols.map((s) => escapeRegex(s)).join("|")}|)=`);
-  console.log(opRegex);
   var numberTypeRegex = /[fui]/g;
   var unaryOpRegex = ["!", "*", "&", "~"];
 
@@ -17942,9 +17949,20 @@
     new Uint8Array(dst).set(new Uint8Array(buf));
     return dst;
   }
+  function cloneStackFrame(frame) {
+    return {
+      ...frame,
+      bindings: new Map(frame.bindings),
+      temporaries: frame.temporaries.slice(),
+      functionDefinitions: new Map(frame.functionDefinitions),
+      blocks: frame.blocks.map((b) => ({
+        bindings: new Map(b.bindings)
+      }))
+    };
+  }
   var ExecutionContext = class _ExecutionContext {
     constructor(opts, prev, executor) {
-      this.stack = opts.stack.slice();
+      this.stack = opts.stack.map((frame) => cloneStackFrame(frame));
       this.memory = cloneArrayBuffer(opts.memory);
       this.littleEndian = opts.littleEndian;
       this.view = new DataView(this.memory);
@@ -17955,6 +17973,26 @@
       if (this.prev)
         this.prev.next = this;
       this.executor = executor;
+    }
+    getindex() {
+      if (!this.prev)
+        return 1;
+      this._index = 1 + this.prev.getindex();
+      return this._index;
+    }
+    seekindex(i) {
+      if (i === this.getindex())
+        return this;
+      if (i > this.getindex()) {
+        if (!this.next)
+          return this;
+        return this.next.seekindex(i);
+      }
+      if (i < this.getindex()) {
+        if (!this.prev)
+          return this;
+        return this.prev.seekindex(i);
+      }
     }
     getvar(name2) {
       return this.stacktop().bindings.get(name2) ?? this.stack[0].bindings.get(name2);
@@ -18064,6 +18102,7 @@
       this.stacktop().temporaries.push(instance);
     }
     pushNamed(type, value, name2, creator) {
+      console.log(name2, value);
       const instance = this._push(type, value, creator);
       const binding = {
         ...instance,
@@ -18965,7 +19004,6 @@
       if (errs)
         return errs;
       const badargs = [];
-      console.log("fnname", this.d.name, "argtypes", argTypes, "typesig", functionTypeSig.args);
       for (let i = 0; i < functionTypeSig.args.length; i++) {
         if (!isStruct(argTypes[i]) && !isStruct(functionTypeSig.args[i]))
           continue;
@@ -19563,7 +19601,10 @@
     const top2 = ctx.stacktop();
     ctx.pushBlock();
     for (const stmt of body) {
+      const oldesp = ctx.esp;
       ctx = stmt.exec(ctx);
+      while (oldesp > ctx.esp)
+        ctx.popTempValue();
       if (top2.freed) {
         return {
           returned: true,
@@ -20036,11 +20077,9 @@
   }
   function parseConsequentExpr(left) {
     const muts = left.end.mut();
-    console.log(left.text());
     return muts.match([
       // binary op
       [opRegex, "operator", (op) => {
-        console.log("found op", op);
         const bp = getBindingPowerOfNextToken(left.end);
         const right = muts.parse(parseExpr, bp);
         return new BinaryOpNode(left.start, muts.current(), {
@@ -20122,7 +20161,6 @@
           def(ctx, call) {
             const args = call.d.args;
             ctx = ctx.clone(call);
-            ctx = args[0].exec(ctx);
             const value = ctx.popTempValueAndGetData();
             ctx.stdout += String.fromCharCode(Number(value));
             return ctx;
@@ -20191,15 +20229,20 @@
       return diagnostics;
     });
   }
-  function pointersExecutorHighlighterPlugin(exec) {
+  function pointersExecutorHighlighterPlugin(exec, highlights) {
     let decorations2 = RangeSet.of([]);
     return ViewPlugin.define((view) => {
       return {
         update(update) {
-          console.log("Exec", exec, exec.executor.start.position(), exec.executor.end.position());
-          decorations2 = RangeSet.of(exec && exec.executor ? [Decoration.mark({
-            class: "currently-executing-highlight"
-          }).range(exec.executor.start.position(), exec.executor.end.position())] : []);
+          decorations2 = RangeSet.of([
+            // currently executing
+            ...exec && exec.executor ? [Decoration.mark({
+              class: "currently-executing-highlight"
+            }).range(exec.executor.start.position(), exec.executor.end.position())] : [],
+            ...highlights.map((h) => Decoration.mark({
+              class: "hovered-highlight"
+            }).range(h.start.position(), h.end.position()))
+          ], true);
         }
       };
     }, {
@@ -20219,7 +20262,7 @@
             const docstring = v.state.doc.toString();
             props.setCode(docstring);
           }
-        }), pointerSyntaxHighlighterPlugin(), pointersDiagnosticPlugin(), EditorView.editable.of(!props.isRunning()), pointersExecutorHighlighterPlugin(props.exec())];
+        }), pointerSyntaxHighlighterPlugin(), pointersDiagnosticPlugin(), EditorView.editable.of(!props.isRunning()), pointersExecutorHighlighterPlugin(props.exec(), props.nodeHighlights())];
         const state = EditorState.create({
           doc: props.code(),
           extensions: extensions()
@@ -20227,6 +20270,7 @@
         createEffect(() => {
           props.isRunning();
           props.exec();
+          props.nodeHighlights();
           untrack(() => {
             view.setState(EditorState.create({
               doc: props.code(),
@@ -20244,10 +20288,11 @@
   }
 
   // src/ui/MemoryViewPanel.tsx
-  var _tmpl$2 = /* @__PURE__ */ template(`<div class=memory-cell><div class=memory-cell-value>0x<!> (<!>)</div><div class=memory-cell-variables>`);
+  var _tmpl$2 = /* @__PURE__ */ template(`<div class=memory-cell><div class=memory-cell-addr></div><div class=memory-cell-contents><div class=memory-cell-value> </div><div class=memory-cell-variables>`);
   var _tmpl$22 = /* @__PURE__ */ template(`<div>+`);
   var _tmpl$3 = /* @__PURE__ */ template(`<div class=memory-view-panel><div class=memory-cell-container>`);
   function getAllVariableBindings(ctx) {
+    console.log("getallbindings,", ctx);
     return ctx.stack.map((frame) => frame.temporaries.map((t2) => ({
       variable: t2,
       name: void 0
@@ -20258,14 +20303,15 @@
   }
   function generateVariableMemoryMap(ctx) {
     const allBindings = getAllVariableBindings(ctx);
-    console.log(allBindings);
+    console.log("ALLBINDINGS", allBindings);
     const largestAddress = Math.max(...allBindings.map((b) => b.variable.offset + ctx.sizeof(b.variable.type)));
     const metadata = [];
     const memArray = new Uint8Array(ctx.memory);
     for (let i = 0; i < largestAddress; i++) {
       metadata.push({
         variables: [],
-        value: memArray[i]
+        value: memArray[i],
+        i
       });
     }
     for (const binding of allBindings) {
@@ -20283,57 +20329,63 @@
   function getVarName(c) {
     if (c.name)
       return c.name;
-    console.log(c);
     if (!c.creator)
       return;
-    const start = getLineAndCol(c.creator.start.text(), c.creator.start.position());
-    const end = getLineAndCol(c.creator.end.text(), c.creator.end.position());
-    return start.line == end.line ? `(${start.line}:${start.col} - ${end.col})` : `(${start.line}:${start.col} - ${end.line}:${end.col})`;
+    return "TEMP";
   }
   function MemoryCell(props) {
     return (() => {
-      const _el$ = _tmpl$2(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$6 = _el$3.nextSibling, _el$4 = _el$6.nextSibling, _el$7 = _el$4.nextSibling, _el$5 = _el$7.nextSibling, _el$8 = _el$2.nextSibling;
-      insert(_el$2, () => props.value().value.toString(16).padStart(2, "0"), _el$6);
-      insert(_el$2, () => String.fromCharCode(props.value().value), _el$7);
-      insert(_el$8, createComponent(For, {
+      const _el$ = _tmpl$2(), _el$2 = _el$.firstChild, _el$3 = _el$2.nextSibling, _el$4 = _el$3.firstChild, _el$5 = _el$4.firstChild, _el$6 = _el$4.nextSibling;
+      _el$.addEventListener("mouseenter", () => {
+        props.setNodeHighlights(props.value().variables.map((v) => v.creator));
+      });
+      insert(_el$2, () => props.value().i.toString(16));
+      insert(_el$4, () => props.value().value.toString(16).padStart(2, "0"), _el$5);
+      insert(_el$4, () => String.fromCharCode(props.value().value), null);
+      insert(_el$6, createComponent(For, {
         get each() {
           return props.value().variables;
         },
         children: (v) => (() => {
-          const _el$9 = _tmpl$22(), _el$10 = _el$9.firstChild;
-          insert(_el$9, () => getVarName(v), _el$10);
-          insert(_el$9, () => v.offset, null);
-          return _el$9;
+          const _el$7 = _tmpl$22(), _el$8 = _el$7.firstChild;
+          insert(_el$7, () => getVarName(v), _el$8);
+          insert(_el$7, () => v.offset, null);
+          return _el$7;
         })()
       }));
       return _el$;
     })();
   }
   function MemoryViewPanel(props) {
-    const memVarMap = createMemo(() => {
-      return generateVariableMemoryMap(props.output());
-    });
+    const memVarMap = () => generateVariableMemoryMap(props.output());
     createEffect(() => {
-      console.log("VARMAP", memVarMap());
+      console.log(memVarMap());
     });
     return (() => {
-      const _el$11 = _tmpl$3(), _el$12 = _el$11.firstChild;
-      insert(_el$12, createComponent(For, {
+      const _el$9 = _tmpl$3(), _el$10 = _el$9.firstChild;
+      _el$9.addEventListener("mouseleave", () => {
+        props.setNodeHighlights([]);
+      });
+      insert(_el$10, createComponent(For, {
         get each() {
           return memVarMap();
         },
         children: (cell) => createComponent(MemoryCell, {
+          get setNodeHighlights() {
+            return props.setNodeHighlights;
+          },
           value: () => cell
         })
       }));
-      return _el$11;
+      return _el$9;
     })();
   }
 
   // src/ui/Page.tsx
-  var _tmpl$4 = /* @__PURE__ */ template(`<button>Back`);
-  var _tmpl$23 = /* @__PURE__ */ template(`<button>Forward`);
-  var _tmpl$32 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><button class=run-button></button><span class=run-feedback></span></div><pre class=code-output>`);
+  var _tmpl$4 = /* @__PURE__ */ template(`<button class=menu-button>Back`);
+  var _tmpl$23 = /* @__PURE__ */ template(`<button class=menu-button>Forward`);
+  var _tmpl$32 = /* @__PURE__ */ template(`<input class=exec-index type=number min=1>`);
+  var _tmpl$42 = /* @__PURE__ */ template(`<div class=page><div class=code-output-panel><div class=run-panel><div class=run-row><button class=menu-button></button><span class=run-feedback></span></div><div class=run-row></div></div><pre class=code-output>`);
   var DEFAULTCODE = `int printstr(char * str) {
     while (*str != '\\0') {
         putc(*str);
@@ -20369,54 +20421,63 @@ printnum(123456);
     const [output, setOutput] = createSignal(run(code()));
     const [exec, setExec] = createSignal();
     const [isRunning, setIsRunning] = createSignal(false);
+    const [nodeHighlights, setNodeHighlights] = createSignal([]);
     return (() => {
-      const _el$ = _tmpl$32(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.nextSibling, _el$8 = _el$3.nextSibling;
+      const _el$ = _tmpl$42(), _el$2 = _el$.firstChild, _el$3 = _el$2.firstChild, _el$4 = _el$3.firstChild, _el$5 = _el$4.firstChild, _el$6 = _el$5.nextSibling, _el$7 = _el$4.nextSibling, _el$11 = _el$3.nextSibling;
       insert(_el$, createComponent(CodeEditor, {
         code,
         setCode,
         isRunning,
-        exec
+        exec,
+        nodeHighlights
       }), _el$2);
-      _el$4.$$click = () => {
+      _el$5.$$click = () => {
         setIsRunning(!isRunning());
         if (isRunning()) {
-          console.log(parse(code()));
           setOutput(run(code()));
           const o = output().finalState;
-          console.log("FINALSTATE", o);
           if (o)
             setExec(o);
         } else {
           setExec();
         }
       };
-      insert(_el$4, () => isRunning() ? "Stop" : "Run");
-      insert(_el$5, () => output().type === "error" ? "Error" : "Success");
-      insert(_el$3, createComponent(Show, {
+      insert(_el$5, () => isRunning() ? "Stop" : "Run");
+      insert(_el$6, () => output().type === "error" ? "Error" : "Success");
+      insert(_el$7, createComponent(Show, {
         get when() {
-          return exec();
+          return createMemo(() => !!exec())() && output().finalState;
         },
         get children() {
           return [(() => {
-            const _el$6 = _tmpl$4();
-            _el$6.$$click = () => {
+            const _el$8 = _tmpl$4();
+            _el$8.$$click = () => {
               const prev = exec().prev;
               if (prev)
                 setExec(prev);
             };
-            return _el$6;
+            return _el$8;
           })(), (() => {
-            const _el$7 = _tmpl$23();
-            _el$7.$$click = () => {
+            const _el$9 = _tmpl$23();
+            _el$9.$$click = () => {
               const next = exec().next;
               if (next)
                 setExec(next);
             };
-            return _el$7;
-          })()];
+            return _el$9;
+          })(), "  ", "(", (() => {
+            const _el$10 = _tmpl$32();
+            _el$10.$$input = (e) => {
+              const value = Number(e.target.value);
+              setExec(exec().seekindex(value));
+            };
+            createRenderEffect(() => setAttribute(_el$10, "max", output().finalState.getindex()));
+            createRenderEffect(() => _el$10.value = exec().getindex());
+            return _el$10;
+          })(), " ", "/ ", createMemo(() => output().finalState.getindex()), ")"];
         }
-      }), null);
-      insert(_el$8, (() => {
+      }));
+      insert(_el$11, (() => {
         const _c$ = createMemo(() => output().type === "success");
         return () => _c$() ? output().finalState.stdout : output().errors.map((err) => formatDiagnostic(err)).join("\n");
       })());
@@ -20426,15 +20487,16 @@ printnum(123456);
         },
         get children() {
           return createComponent(MemoryViewPanel, {
-            output: exec
+            output: exec,
+            setNodeHighlights
           });
         }
       }), null);
-      createRenderEffect(() => (output().type === "error" ? "red" : "green") != null ? _el$5.style.setProperty("color", output().type === "error" ? "red" : "green") : _el$5.style.removeProperty("color"));
+      createRenderEffect(() => (output().type === "error" ? "red" : "green") != null ? _el$6.style.setProperty("color", output().type === "error" ? "red" : "green") : _el$6.style.removeProperty("color"));
       return _el$;
     })();
   }
-  delegateEvents(["click"]);
+  delegateEvents(["click", "input"]);
 
   // src/index.tsx
   render(() => {

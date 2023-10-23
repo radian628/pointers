@@ -117,6 +117,16 @@ function cloneArrayBuffer(buf: ArrayBuffer): ArrayBuffer {
   return dst;
 }
 
+function cloneStackFrame(frame: StackFrame): StackFrame {
+  return {
+    ...frame,
+    bindings: new Map(frame.bindings),
+    temporaries: frame.temporaries.slice(),
+    functionDefinitions: new Map(frame.functionDefinitions),
+    blocks: frame.blocks.map((b) => ({ bindings: new Map(b.bindings) })),
+  };
+}
+
 // TODO: make sure that editing one context doesn't affect previous ones
 // ideally all of these execution contexts should be able to function independently
 // of one another
@@ -131,6 +141,7 @@ export class ExecutionContext {
   stack: StackFrame[];
   stdout: string;
   executor: ParseNode<any>;
+  _index: number;
 
   constructor(
     opts: {
@@ -144,7 +155,7 @@ export class ExecutionContext {
     prev?: ExecutionContext,
     executor?: ParseNode<any>
   ) {
-    this.stack = opts.stack.slice();
+    this.stack = opts.stack.map((frame) => cloneStackFrame(frame));
     this.memory = cloneArrayBuffer(opts.memory);
     this.littleEndian = opts.littleEndian;
     this.view = new DataView(this.memory);
@@ -154,6 +165,24 @@ export class ExecutionContext {
     this.stdout = opts.stdout;
     if (this.prev) this.prev.next = this;
     this.executor = executor;
+  }
+
+  getindex() {
+    if (!this.prev) return 1;
+    this._index = 1 + this.prev.getindex();
+    return this._index;
+  }
+
+  seekindex(i: number) {
+    if (i === this.getindex()) return this;
+    if (i > this.getindex()) {
+      if (!this.next) return this;
+      return this.next.seekindex(i);
+    }
+    if (i < this.getindex()) {
+      if (!this.prev) return this;
+      return this.prev.seekindex(i);
+    }
   }
 
   getvar(name: string) {
@@ -329,6 +358,8 @@ export class ExecutionContext {
     name: string,
     creator: ParseNode<any>
   ) {
+    console.log(name, value);
+
     const instance = this._push(type, value, creator);
 
     const binding = {

@@ -1,11 +1,24 @@
 :root {
-  --border: #bbbbbb;
+  --border: #999999;
+  --border-thin: #cccccc;
+  --background-shaded: #eeeeee;
   font-family: sans-serif;
 }
 
 body {
   padding: 0;
   margin: 0;
+}
+
+.menu-button {
+  margin-left: 4px;
+  margin-right: 4px;
+}
+
+.exec-index {
+  height: 14px;
+  vertical-align: center;
+  width: 5em;
 }
 
 .page {
@@ -24,11 +37,16 @@ body {
 
   .code-output-panel {
     margin: 10px;
+    margin-right: 0;
 
     .run-feedback {
       margin-left: 10px;
     }
 
+    .run-row {
+      display: flex;
+      margin-bottom: 5px;
+    }
     .code-output {
       font-family: monospace;
     }
@@ -46,15 +64,33 @@ body {
       flex-wrap: wrap;
 
       .memory-cell {
-        width: 140px;
+        width: 12.5%;
+        box-sizing: border-box;
+        display: flex;
         font-family: monospace;
-        border: 1px solid var(--border);
-        height: 50px;
+        border-bottom: 1px solid var(--border);
+        border-right: 1px solid var(--border);
+
+        .memory-cell-addr {
+          min-width: 2ex;
+          margin-right: 4px;
+          background-color: var(--background-shaded);
+        }
+
+        .memory-cell-contents {
+          overflow: hidden;
+        }
       }
     }
   }
 }
 
 .currently-executing-highlight {
-  background-color: #ffff00;
+  background-color: #baef87;
+  border-radius: 6px;
+}
+
+.hovered-highlight {
+  background-color: #f0a6f0;
+  border-radius: 6px;
 }

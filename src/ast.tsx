@@ -103,7 +103,9 @@ export function handleStatementList(
   const top = ctx.stacktop();
   ctx.pushBlock();
   for (const stmt of body) {
+    const oldesp = ctx.esp;
     ctx = stmt.exec(ctx);
+    while (oldesp > ctx.esp) ctx.popTempValue();
 
     // if we freed the current stack frame, exit early
     if (top.freed) {

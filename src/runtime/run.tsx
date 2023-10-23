@@ -121,7 +121,7 @@ export function run(code: string) {
                 def(ctx, call) {
                   const args = call.d.args;
                   ctx = ctx.clone(call);
-                  ctx = args[0].exec(ctx);
+                  // ctx = args[0].exec(ctx);
                   const value = ctx.popTempValueAndGetData();
                   ctx.stdout += String.fromCharCode(Number(value));
                   return ctx;

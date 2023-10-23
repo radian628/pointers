@@ -55,8 +55,6 @@ export const opEqualsRegex = new RegExp(
   `(${opSymbols.map((s) => escapeRegex(s)).join("|")}|)=`
 );
 
-console.log(opRegex);
-
 export const numberTypeRegex = /[fui]/g;
 export type Operator = (typeof opSymbols)[number];
 

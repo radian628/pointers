@@ -653,7 +653,6 @@ function parseInitExpr(s: ParseSource): ParseExpr {
 
 function parseConsequentExpr(left: ParseExpr) {
   const muts = left.end.mut();
-  console.log(left.text());
   return muts.match<ParseExpr>(
     [
       // binary op
@@ -661,8 +660,6 @@ function parseConsequentExpr(left: ParseExpr) {
         opRegex,
         "operator",
         (op) => {
-          console.log("found op", op);
-
           const bp = getBindingPowerOfNextToken(left.end);
 
           const right = muts.parse(parseExpr, bp);

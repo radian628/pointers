@@ -75,15 +75,6 @@ export class FunctionCallNode
 
     const badargs: string[] = [];
 
-    console.log(
-      "fnname",
-      this.d.name,
-      "argtypes",
-      argTypes,
-      "typesig",
-      functionTypeSig.args
-    );
-
     for (let i = 0; i < functionTypeSig.args.length; i++) {
       // only strictly match if both are structs
       if (!isStruct(argTypes[i]) && !isStruct(functionTypeSig.args[i]))
