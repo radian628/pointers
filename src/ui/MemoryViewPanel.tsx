@@ -1,14 +1,21 @@
-import { For, createEffect, createMemo } from "solid-js";
+import { For, createEffect, createMemo, createSignal } from "solid-js";
 import { RunState } from "../runtime/run";
-import { ExecutionContext, Type } from "../runtime/runtime";
+import {
+  AnonymousVariableInstance,
+  ExecutionContext,
+  Type,
+  VariableInstance,
+  sizeof,
+} from "../runtime/runtime";
 import { ParseNode } from "../parser-utils";
-import { getLineAndCol } from "../typecheck";
+import { dereference, getLineAndCol, isPointer } from "../typecheck";
 
 type VariableMemoryCorrespondence = {
   name?: string;
   creator: ParseNode<any>;
   type: Type;
   offset: number;
+  v: AnonymousVariableInstance;
 };
 
 type MemoryCellMetadata = {
@@ -58,6 +65,7 @@ function generateVariableMemoryMap(ctx: ExecutionContext) {
         type: binding.variable.type,
         offset: i,
         creator: binding.variable.creator,
+        v: binding.variable,
       });
     }
   }
@@ -74,14 +82,35 @@ export function getVarName(c: VariableMemoryCorrespondence) {
 }
 
 export function MemoryCell(props: {
+  highlight: () => boolean;
   value: () => MemoryCellMetadata;
   setNodeHighlights: (hl: ParseNode<any>[]) => void;
+  setHighlightCellLow: (low: number) => void;
+  setHighlightCellHigh: (high: number) => void;
+  exec: () => ExecutionContext;
 }) {
   return (
     <div
-      class="memory-cell"
+      classList={{
+        "memory-cell": true,
+        "highlighted-memory-cell": props.highlight(),
+      }}
       onMouseEnter={() => {
         props.setNodeHighlights(props.value().variables.map((v) => v.creator));
+
+        // is this a pointer?
+        const ptr = props.value().variables.find((v) => isPointer(v.type));
+
+        if (ptr) {
+          let ptrval = props.exec().getVar(ptr.v);
+          if (typeof ptrval !== "number") ptrval = -99999;
+          console.log(ptrval);
+          props.setHighlightCellLow(ptrval);
+          props.setHighlightCellHigh(ptrval + sizeof(dereference(ptr.type)));
+        } else {
+          props.setHighlightCellLow(-1);
+          props.setHighlightCellHigh(-1);
+        }
       }}
     >
       <div class="memory-cell-addr">{props.value().i.toString(16)}</div>
@@ -110,19 +139,30 @@ export function MemoryViewPanel(props: {
 }) {
   const memVarMap = () => generateVariableMemoryMap(props.output());
 
+  const [highlightCellLow, setHighlightCellLow] = createSignal(-1);
+  const [highlightCellHigh, setHighlightCellHigh] = createSignal(-1);
+
   return (
     <div
       class="memory-view-panel"
       onMouseLeave={() => {
         props.setNodeHighlights([]);
+        setHighlightCellHigh(-1);
+        setHighlightCellLow(-1);
       }}
     >
       <div class="memory-cell-container">
         <For each={memVarMap()}>
           {(cell) => (
             <MemoryCell
+              exec={props.output}
+              highlight={() =>
+                cell.i >= highlightCellLow() && cell.i < highlightCellHigh()
+              }
               setNodeHighlights={props.setNodeHighlights}
               value={() => cell}
+              setHighlightCellLow={setHighlightCellLow}
+              setHighlightCellHigh={setHighlightCellHigh}
             ></MemoryCell>
           )}
         </For>

@@ -17960,6 +17960,14 @@
       }))
     };
   }
+  function sizeof(type) {
+    if (type.pointers > 0)
+      return 4;
+    if (type.definition.category === "struct") {
+      return type.definition.fields.reduce((prev, field) => prev + sizeof(field[1]), 0);
+    }
+    return type.definition.size;
+  }
   var ExecutionContext = class _ExecutionContext {
     constructor(opts, prev, executor) {
       this.stack = opts.stack.map((frame) => cloneStackFrame(frame));
@@ -20312,7 +20320,8 @@
           name: binding.name,
           type: binding.variable.type,
           offset: i,
-          creator: binding.variable.creator
+          creator: binding.variable.creator,
+          v: binding.variable
         });
       }
     }
@@ -20330,6 +20339,18 @@
       const _el$ = _tmpl$2(), _el$2 = _el$.firstChild, _el$3 = _el$2.nextSibling, _el$4 = _el$3.firstChild, _el$5 = _el$4.firstChild, _el$6 = _el$4.nextSibling;
       _el$.addEventListener("mouseenter", () => {
         props.setNodeHighlights(props.value().variables.map((v) => v.creator));
+        const ptr = props.value().variables.find((v) => isPointer(v.type));
+        if (ptr) {
+          let ptrval = props.exec().getVar(ptr.v);
+          if (typeof ptrval !== "number")
+            ptrval = -99999;
+          console.log(ptrval);
+          props.setHighlightCellLow(ptrval);
+          props.setHighlightCellHigh(ptrval + sizeof(dereference(ptr.type)));
+        } else {
+          props.setHighlightCellLow(-1);
+          props.setHighlightCellHigh(-1);
+        }
       });
       insert(_el$2, () => props.value().i.toString(16));
       insert(_el$4, () => props.value().value.toString(16).padStart(2, "0"), _el$5);
@@ -20345,25 +20366,36 @@
           return _el$7;
         })()
       }));
+      createRenderEffect(() => _el$.classList.toggle("highlighted-memory-cell", !!props.highlight()));
       return _el$;
     })();
   }
   function MemoryViewPanel(props) {
     const memVarMap = () => generateVariableMemoryMap(props.output());
+    const [highlightCellLow, setHighlightCellLow] = createSignal(-1);
+    const [highlightCellHigh, setHighlightCellHigh] = createSignal(-1);
     return (() => {
       const _el$9 = _tmpl$3(), _el$10 = _el$9.firstChild;
       _el$9.addEventListener("mouseleave", () => {
         props.setNodeHighlights([]);
+        setHighlightCellHigh(-1);
+        setHighlightCellLow(-1);
       });
       insert(_el$10, createComponent(For, {
         get each() {
           return memVarMap();
         },
         children: (cell) => createComponent(MemoryCell, {
+          get exec() {
+            return props.output;
+          },
+          highlight: () => cell.i >= highlightCellLow() && cell.i < highlightCellHigh(),
           get setNodeHighlights() {
             return props.setNodeHighlights;
           },
-          value: () => cell
+          value: () => cell,
+          setHighlightCellLow,
+          setHighlightCellHigh
         })
       }));
       return _el$9;

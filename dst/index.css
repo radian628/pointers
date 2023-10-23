@@ -33,6 +33,9 @@ body {
     width: 6.25%;
   }
 }
+.highlighted-memory-cell {
+  background-color: yellow;
+}
 .page {
   display: flex;
   width: 100vw;

@@ -127,6 +127,19 @@ function cloneStackFrame(frame: StackFrame): StackFrame {
   };
 }
 
+export function sizeof(type: Type) {
+  if (type.pointers > 0) return 4;
+
+  if (type.definition.category === "struct") {
+    return type.definition.fields.reduce(
+      (prev, field) => prev + sizeof(field[1]),
+      0
+    );
+  }
+
+  return type.definition.size;
+}
+
 // TODO: make sure that editing one context doesn't affect previous ones
 // ideally all of these execution contexts should be able to function independently
 // of one another
