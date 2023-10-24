@@ -1,29 +1,49 @@
+import { OperandTypes, TypeOperand } from "./arch";
+
 export type OperandVariant = {
   id: number;
-  label: string;
-  desc: string;
 };
 
-export type OperandSpec =
-  | {
-      name: string;
-      type: "enum";
-      variants: OperandVariant[];
-      desc: string;
-    }
-  | {
-      name: string;
-      type: "number";
-      bits: number;
-      desc: string;
-    };
-
-export type InstructionSpec = {
-  name: string;
-  operands: OperandSpec[];
-  desc: string;
+type OperandEnum = {
+  type: "enum";
+  variants: readonly OperandVariant[];
 };
 
-export class AssemblyArchGenerator {
-  constructor(instructions: InstructionSpec[]) {}
+type OperandNumber = {
+  type: "number";
+  bits: number;
+};
+
+export type OperandSpec = OperandEnum | OperandNumber;
+
+export type MapOperandToValue<Op extends OperandSpec> = Op extends OperandEnum
+  ? Op["variants"][number]["id"]
+  : number;
+
+export type MapOperandsToValue<Ops extends readonly OperandSpec[]> =
+  Ops extends readonly [
+    infer First extends OperandSpec,
+    ...infer Rest extends readonly OperandSpec[]
+  ]
+    ? [MapOperandToValue<First>, ...MapOperandsToValue<Rest>]
+    : [];
+
+export type InstructionSpec<Operands extends readonly OperandSpec[]> = {
+  operands: Operands;
+};
+
+export class AssemblyInstructionGenerator<
+  Instructions extends Record<string, InstructionSpec<readonly OperandSpec[]>>
+> {
+  run: {
+    [K in keyof Instructions]: (
+      ...operands: MapOperandsToValue<Instructions[K]["operands"]>
+    ) => AssemblyInstructionGenerator<Instructions>;
+  };
+
+  instructions: Instructions;
+
+  constructor(instructions: Instructions) {
+    this.instructions = instructions;
+  }
 }

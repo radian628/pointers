@@ -1,6 +1,6 @@
 import { InstructionSpec, OperandSpec, OperandVariant } from "./arch-gen";
 
-enum OperandTypes {
+export enum OperandTypes {
   Int8,
   Int16,
   Int32,
@@ -13,7 +13,7 @@ enum OperandTypes {
   Float64,
 }
 
-const IntegerTypeOperand: OperandVariant[] = [
+const IntegerTypeOperand = [
   {
     id: OperandTypes.Int8,
     label: "int8",
@@ -54,9 +54,9 @@ const IntegerTypeOperand: OperandVariant[] = [
     label: "uint64",
     desc: "Unsigned 64-bit integer.",
   },
-];
+] as const;
 
-const TypeOperand: OperandVariant[] = [
+export const TypeOperand = [
   ...IntegerTypeOperand,
   {
     id: OperandTypes.Float32,
@@ -68,33 +68,28 @@ const TypeOperand: OperandVariant[] = [
     label: "float64",
     desc: "64-bit floating-point number (double).",
   },
-];
+] as const;
+
+new AssemblyInstructionGenerator({
+  add: binaryOperatorInstruction(TypeOperand)
+  },
+});
 
 function binaryOperatorInstruction(
-  name: string,
-  desc: string,
-  descarg1: string,
-  descarg2: string,
   types: OperandVariant[]
-): InstructionSpec {
+) {
   return {
-    name,
-    desc,
     operands: [
       {
-        name: "left",
         type: "enum",
-        desc: descarg1,
         variants: types,
       },
       {
-        name: "right",
         type: "enum",
-        desc: descarg2,
         variants: types,
       },
-    ],
-  };
+    ] as const,
+  } satisfies InstructionSpec<any>;
 }
 
 const popMsg = "Pop two operands from the top of the stack, ";
