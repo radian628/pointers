@@ -30,8 +30,13 @@ data ParserPointer = ParserPointer {
   sliceStr :: [Char]
 } deriving Show
 
+identParser :: a -> Parser a
 identParser val = Parser {
   parse = \ str -> Just (val, str)
+}
+
+getpp = Parser {
+  parse = \ pp -> Just (pp, pp)
 }
 
 instance Functor Parser where
