@@ -114,7 +114,9 @@ data StructOrUnionSpecifier = StructOrUnionSpecifier
   }
   deriving (Show)
 
-data EnumSpecifier = EnumSpecifier (Maybe [Char]) (Maybe [Enumerator])
+data EnumSpecifier
+  = EnumSpecifierDeclaration [Char]
+  | EnumSpecifierDefinition (Maybe [Char]) [Enumerator]
   deriving (Show)
 
 data StorageClassSpecifier
@@ -166,9 +168,11 @@ data TypeSpecifierOrQualifier
   | IsTypeQualifier TypeQualifier
   deriving (Show)
 
+type PointerType = [[TypeQualifier]]
+
 data AbstractDeclarator
   = AbstractDeclarator
-      ( Maybe [[TypeQualifier]],
+      ( Maybe PointerType,
         Maybe [DirectAbstractDeclaratorElement]
       )
   deriving (Show)
@@ -196,6 +200,20 @@ data DirectAbstractDeclaratorElement
   | AsteriskDADE
   | ParameterListDADE
   deriving (Show)
+
+data Declarator
+  = Declarator
+      ( Maybe PointerType,
+        DirectDeclarator
+      )
+  deriving (Show)
+
+data DirectDeclarator
+  = ArrayDD [DirectDeclaratorElement]
+  deriving (Show)
+
+data DirectDeclaratorElement
+  = ArrayDDE
 
 data CSTTypeNameData = SimpleType
   { typeName :: [Char],
