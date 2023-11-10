@@ -24,62 +24,100 @@ setStartEnd parser = do
   ns <- nodeStart <$> (getnodeSkipErr $ identParser ())
   d <- parser
   ne <- nodeEnd <$> (getnodeSkipErr $ identParser ())
-  noopParser $ CSTExpression d ns ne
-
--- allOrNothing p = Parser {
---     parse = \pp -> case parse p pp of
---       CSTExpression v pp pp'
---   }
+  noopParser $ cstexpr d ns ne
 
 modifyStart ppnew node = case node of
-  CSTExpression d pp pp' -> CSTExpression d ppnew pp'
-  CSTError err pp pp' -> CSTError err ppnew pp'
+  CSTExpression d pp pp' _ _ -> cstexpr d ppnew pp'
+  CSTError err pp pp' _ _ -> csterror err ppnew pp'
+
+modifySkip node skipstart skipend = case node of
+  CSTExpression d pp pp' ss se ->
+    CSTExpression d pp pp' (skipstart ++ ss) (se ++ skipend)
+  CSTError err pp pp' ss se ->
+    CSTError err pp pp' (skipstart ++ ss) (se ++ skipend)
 
 newtype Parser a = Parser
   { parse :: ParserPointer -> CSTNode a
   }
+
+data SkipTokenC
+  = SkipTokenWhitespaceC [Char]
+  | SkipTokenLineCommentC [Char]
+  | SkipTokenBlockCommentC [Char]
+
+doskip p = do
+  skipstart <- pkleene skipC
+  d <- p
+  skipend <- pkleene skipC
+  pure (modifySkip d skipstart skipend)
+
+skipC =
+  getnode $
+    paltv
+      [ SkipTokenWhitespaceC <$> pstr " ",
+        SkipTokenWhitespaceC <$> pstr "\t",
+        SkipTokenWhitespaceC <$> pstr "\r",
+        SkipTokenWhitespaceC <$> pstr "\n",
+        do
+          pstr "//"
+          SkipTokenLineCommentC <$> pkleene (pfn (/= '\n'))
+          -- TODO: proper multi-line comments
+          -- do
+          --   pstr "/*"
+      ]
+
+mergeskip outer inner =
+  modifySkip inner (skipStart outer) (skipEnd outer)
 
 data CSTNode a
   = --- Normal value representing a successful computation.
     CSTExpression
       { nodeData :: a,
         nodeStart :: ParserPointer,
-        nodeEnd :: ParserPointer
+        nodeEnd :: ParserPointer,
+        skipStart :: [CSTNode SkipTokenC],
+        skipEnd :: [CSTNode SkipTokenC]
       }
   | CSTError
       { nodeErr :: [Char],
         nodeStart :: ParserPointer,
-        nodeEnd :: ParserPointer
+        nodeEnd :: ParserPointer,
+        skipStart :: [CSTNode SkipTokenC],
+        skipEnd :: [CSTNode SkipTokenC]
       }
+
+cstexpr d start end = CSTExpression d start end [] []
+
+csterror err start end = CSTError err start end [] []
 
 instance Show a => Show (CSTNode a) where
   show = \n ->
     case n of
-      CSTExpression a pp pp' -> show a
-      CSTError err pp pp' -> show err
+      CSTExpression a pp pp' _ _ -> show a
+      CSTError err pp pp' _ _ -> show err
 
 noerr defaultValue p =
   Parser
     { parse = \pp -> case parse p pp of
-        CSTExpression v pp pp' ->
-          CSTExpression v pp pp'
-        CSTError _ pp pp' ->
-          CSTExpression defaultValue pp pp'
+        CSTExpression v pp pp' _ _ ->
+          cstexpr v pp pp'
+        CSTError _ pp pp' _ _ ->
+          cstexpr defaultValue pp pp'
     }
 
 seterr err parser =
   Parser
     { parse = \pp -> case parse parser pp of
-        CSTExpression v pp pp' ->
-          CSTExpression v pp pp'
-        CSTError _ pp pp' ->
-          CSTError err pp pp'
+        CSTExpression v pp pp' _ _ ->
+          cstexpr v pp pp'
+        CSTError _ pp pp' _ _ ->
+          csterror err pp pp'
     }
 
 instance Functor (CSTNode) where
   fmap f x = case x of
-    CSTExpression inner start end -> CSTExpression (f inner) start end
-    CSTError s p p2 -> CSTError s p p2
+    CSTExpression inner start end _ _ -> cstexpr (f inner) start end
+    CSTError s p p2 _ _ -> csterror s p p2
 
 nullpp =
   ParserPointer {next = Nothing, pos = 0, fullStr = [], sliceStr = []}
@@ -95,7 +133,7 @@ data ParserPointer = ParserPointer
 identParser :: a -> Parser a
 identParser val =
   Parser
-    { parse = \pp -> CSTExpression val pp pp
+    { parse = \pp -> cstexpr val pp pp
     }
 
 noopParser :: CSTNode a -> Parser a
@@ -113,15 +151,15 @@ instance Functor Parser where
 instance Applicative Parser where
   pure p =
     Parser
-      { parse = \pp -> CSTExpression p pp pp
+      { parse = \pp -> cstexpr p pp pp
       }
   p1 <*> p2 =
     Parser
       { parse = \pp -> case parse p1 pp of
-          CSTExpression f _ pp' -> case parse p2 pp' of
-            CSTExpression v _ pp'' -> CSTExpression (f v) pp pp''
-            CSTError a b c -> CSTError a b c
-          CSTError a b c -> CSTError a b c
+          CSTExpression f _ pp' _ _ -> case parse p2 pp' of
+            CSTExpression v _ pp'' _ _ -> cstexpr (f v) pp pp''
+            CSTError a b c _ _ -> csterror a b c
+          CSTError a b c _ _ -> csterror a b c
       }
 
 instance Monad Parser where
@@ -129,9 +167,9 @@ instance Monad Parser where
     Parser
       { parse = \pp ->
           case parse p pp of
-            CSTExpression v _ pp' ->
+            CSTExpression v _ pp' _ _ ->
               modifyStart pp (parse (f v) pp')
-            CSTError a b c -> CSTError a b b
+            CSTError a b c _ _ -> csterror a b b
       }
 
 --- parser for a character predicate
@@ -141,9 +179,9 @@ pfn f =
     { parse = \pp -> case next pp of
         Just (c', pp') ->
           if f c'
-            then CSTExpression c' pp pp'
-            else CSTError "TODO: actually good error messages" pp pp
-        _ -> CSTError "Unexpected end of input." pp pp
+            then cstexpr c' pp pp'
+            else csterror "TODO: actually good error messages" pp pp
+        _ -> csterror "Unexpected end of input." pp pp
     }
 
 getnode :: Parser a -> Parser (CSTNode a)
@@ -152,9 +190,9 @@ getnode p =
     { parse = \pp ->
         let v = parse p pp
          in case v of
-              CSTError a pp pp' -> CSTError a pp pp'
-              CSTExpression _ pp pp' ->
-                CSTExpression v pp pp'
+              CSTError a pp pp' _ _ -> csterror a pp pp'
+              CSTExpression _ pp pp' _ _ ->
+                cstexpr v pp pp'
     }
 
 getnodeSkipErr :: Parser a -> Parser (CSTNode a)
@@ -163,9 +201,9 @@ getnodeSkipErr p =
     { parse = \pp ->
         let v = parse p pp
          in case v of
-              CSTError a pp pp' -> CSTExpression v pp pp'
-              CSTExpression _ pp pp' ->
-                CSTExpression v pp pp'
+              CSTError a pp pp' _ _ -> cstexpr v pp pp'
+              CSTExpression _ pp pp' _ _ ->
+                cstexpr v pp pp'
     }
 
 --- parser for a single char
@@ -177,8 +215,8 @@ popt :: Parser a -> Parser (Maybe a)
 popt parser =
   Parser
     { parse = \pp -> case parse parser pp of
-        CSTExpression v pp pp' -> CSTExpression (Just v) pp pp'
-        CSTError err pp pp' -> CSTExpression Nothing pp pp
+        CSTExpression v pp pp' _ _ -> cstexpr (Just v) pp pp'
+        CSTError err pp pp' _ _ -> cstexpr Nothing pp pp
     }
 
 --- parser for a string literal
@@ -193,8 +231,8 @@ palt p1 p2 =
   Parser
     { parse = \pp ->
         case parse p1 pp of
-          CSTExpression v pp pp' -> CSTExpression v pp pp'
-          CSTError err pp pp' -> parse p2 pp
+          CSTExpression v pp pp' _ _ -> cstexpr v pp pp'
+          CSTError err pp pp' _ _ -> parse p2 pp
     }
 
 --- parser for concatenation
@@ -212,20 +250,20 @@ pkleene p =
           --- current parse operation
           ( \r pp -> case parse p pp of
               --- success -> combine it with another attempt
-              CSTExpression result _ pp' ->
+              CSTExpression result _ pp' _ _ ->
                 let nextmatchExpr = r pp'
                  in case nextmatchExpr of
-                      CSTExpression nextmatch _ pp'' ->
-                        CSTExpression (result : nextmatch) pp' pp''
+                      CSTExpression nextmatch _ pp'' _ _ ->
+                        cstexpr (result : nextmatch) pp' pp''
               --- failure -> return empty list
-              CSTError err pp pp' -> CSTExpression [] pp pp
+              CSTError err pp pp' _ _ -> cstexpr [] pp pp
           )
     }
 
 maperr :: a -> CSTNode a -> CSTNode a
 maperr value node = case node of
-  CSTExpression item start end -> CSTExpression item start end
-  CSTError msg start end -> CSTExpression value start end
+  CSTExpression item start end _ _ -> cstexpr item start end
+  CSTError msg start end _ _ -> cstexpr value start end
 
 poneormore :: Parser a -> Parser (NonEmpty a)
 poneormore p = poneormoreDifferent p p

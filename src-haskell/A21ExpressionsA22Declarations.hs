@@ -191,19 +191,26 @@ binaryOpHelper operators nextParser =
     left <- nextParser
     rights <- pkleene $ do
       op <-
-        seterr "operator" $
-          getnode $
-            paltv (map (\(str, op) -> op <$ pstr str) operators)
+        getnode $
+          paltv (map (\(str, op) -> op <$ pstr str) operators)
       right <- nextParser
       pure (op, right)
-    pure $ BinaryOpExpressionCD left rights
-
-stupidtest =
-  binaryOpHelper
-    [("*", BinaryOpMul)]
-    ( getnode $
-        (BinaryOpDeleteLaterTestCD <$> integerConstantC)
-    )
+    pure $
+      BinaryOpExpressionCD
+        -- get rid of redundant nested binary op expressions
+        ( case left of
+            CSTExpression d pp pp' ss se ->
+              case d of
+                BinaryOpExpressionCastCD _ -> left
+                BinaryOpExpressionCD left' rights' ->
+                  if null rights'
+                    then -- remember to merge the skip tokens of
+                    -- outer and inner exprs!
+                      mergeskip left left'
+                    else left
+            CSTError {} -> left
+        )
+        rights
 
 multiplicativeExpressionC =
   binaryOpHelper
