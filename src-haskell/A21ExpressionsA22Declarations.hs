@@ -170,32 +170,24 @@ unaryOperatorC =
       ]
 
 castExpressionC =
-  getnode $
-    paltv
-      [ CastExpressionUnaryExpressionC <$> unaryExpressionC,
-        do
-          pchar '('
-          tn <- typeNameC
-          pchar ')'
-          cast <- castExpressionC
-          pure $ CastExpressionCastC tn cast
-      ]
+  doskip $
+    getnode $
+      paltv
+        [ CastExpressionUnaryExpressionC <$> unaryExpressionC,
+          do
+            pchar '('
+            tn <- typeNameC
+            pchar ')'
+            cast <- castExpressionC
+            pure $ CastExpressionCastC tn cast
+        ]
 
 binaryOpHelper ::
   [([Char], BinaryOp)] ->
   Parser (CSTNode BinaryOpExpressionCD) ->
   Parser (CSTNode BinaryOpExpressionCD)
 binaryOpHelper operators nextParser =
-  -- paltv
-  --   [ getnode $ do
-  --       left <- thisParser
-  --       op <- seterr "operator" $ getnode $ paltv (map (\(str, op) -> op <$ pstr str) operators)
-  --       right <- seterr "asdasdasd" nextParser
-  --       pure $ BinaryOpExpressionCD left op right -- ,
-  --       -- nextParser
-  --   ]
-
-  getnode $ do
+  doskip $ getnode $ do
     left <- nextParser
     rights <- pkleene $ do
       op <-
