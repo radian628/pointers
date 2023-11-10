@@ -26,6 +26,11 @@ setStartEnd parser = do
   ne <- nodeEnd <$> (getnodeSkipErr $ identParser ())
   noopParser $ CSTExpression d ns ne
 
+setStart p =
+  Parser
+    { parse = \initpp pp -> parse p pp pp
+    }
+
 newtype Parser a = Parser
   { parse :: ParserPointer -> ParserPointer -> CSTNode a
   }
@@ -110,9 +115,9 @@ instance Applicative Parser where
     Parser
       { parse = \initpp pp -> case parse p1 initpp pp of
           CSTExpression f _ pp' -> case parse p2 initpp pp' of
-            CSTExpression v _ pp'' -> CSTExpression (f v) pp pp''
-            CSTError a b c -> CSTError a b c
-          CSTError a b c -> CSTError a b c
+            CSTExpression v _ pp'' -> CSTExpression (f v) initpp pp''
+            CSTError a b c -> CSTError a initpp c
+          CSTError a b c -> CSTError a initpp c
       }
 
 instance Monad Parser where
@@ -181,12 +186,13 @@ pstr (x : xs) =
 --- parser for alternation
 palt :: Parser a -> Parser a -> Parser a
 palt p1 p2 =
-  Parser
-    { parse = \initpp pp ->
-        case parse p1 initpp pp of
-          CSTExpression v pp pp' -> CSTExpression v pp pp'
-          CSTError err pp pp' -> parse p2 initpp pp
-    }
+  setStart $
+    Parser
+      { parse = \initpp pp ->
+          case parse p1 initpp pp of
+            CSTExpression v pp pp' -> CSTExpression v initpp pp'
+            CSTError err pp pp' -> parse p2 initpp pp
+      }
 
 --- parser for concatenation
 pconcat :: Parser a -> Parser b -> Parser (a, b)
@@ -199,21 +205,18 @@ pconcat pa pb = do
 pkleene p =
   Parser
     { parse =
-        \initpp pp ->
+        curry $
           fix
             --- current parse operation
             ( \r (initpp, pp) -> case parse p initpp pp of
                 --- success -> combine it with another attempt
                 CSTExpression result _ pp' ->
-                  let nextmatchExpr = maperr [] (r (initpp, pp'))
+                  let nextmatchExpr = r (initpp, pp')
                    in case nextmatchExpr of
                         CSTExpression nextmatch _ pp'' ->
                           CSTExpression (result : nextmatch) initpp pp''
                 --- failure -> return empty list
-                CSTError _ pp pp' -> CSTExpression [] initpp pp
-            )
-            ( initpp,
-              pp
+                CSTError err pp pp' -> CSTExpression [] pp pp'
             )
     }
 
@@ -299,6 +302,11 @@ makeppPos str pos fullStr =
     }
 
 makepp str = makeppPos str 0 str
+
+showDetail node =
+  (show node)
+    ++ " remainingstr:                                  "
+    ++ (sliceStr (nodeEnd node))
 
 parseWith str parser =
   let pp = (makepp str)
