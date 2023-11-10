@@ -2,29 +2,32 @@ module A16StringLiterals where
 
 import Data.Maybe
 import GrammarTypes
+import GrammarUtils
 import Parsing
 
 --- A.1.6 String Literals
 
-stringLiteralC = do
-  prefix <- fmap (fromMaybe CharC) (popt encodingPrefixC)
+stringLiteralC = getnode $ do
+  prefix <- popt encodingPrefixC
   pchar '"'
   chars <- sCharSequenceC
   pchar '"'
   pure
-    StringLiteralExpr
-      { encodingType = prefix,
-        stringData = chars
-      }
+    ( StringLiteralC
+        chars
+        prefix
+    )
 
 encodingPrefixC =
-  paltv
-    [ Utf8 <$ pstr "u8",
-      Char16T <$ pstr "u",
-      Char32T <$ pstr "U",
-      WcharT <$ pstr "L"
-    ]
+  getnode
+    ( paltv
+        [ Utf8 <$ pstr "u8",
+          Char16T <$ pstr "u",
+          Char32T <$ pstr "U",
+          WcharT <$ pstr "L"
+        ]
+    )
 
-sCharSequenceC = pkleene sCharC
+sCharSequenceC = getnode $ pkleene sCharC
 
 sCharC = pfn (\c -> c /= '"' && c /= '\\' && c /= '\n')

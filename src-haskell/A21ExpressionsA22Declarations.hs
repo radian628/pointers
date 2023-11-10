@@ -1,261 +1,332 @@
-module A21Expressions where
+module A21ExpressionsA22Declarations where
 
-import A13Identifiers
-import A15Constants
+import A13A14A15
 import A16StringLiterals
 import Data.Foldable
+import Data.Maybe
 import GrammarTypes
 import GrammarUtils
 import Parsing
 
 --- A.2.1 Expressions
 
-primaryExpressionC :: Parser CSTExpressionData
+primaryExpressionC :: Parser (CSTNode PrimaryExpressionC)
 primaryExpressionC =
-  paltv
-    [ fmap (\name -> IdentifierExpr {name}) identifierC,
-      constantC,
-      stringLiteralC,
-      do
-        pchar '('
-        expr <- expressionC
-        pchar ')'
-        pure expr,
-      genericSelectionC
-    ]
+  getnode $
+    paltv
+      [ PrimaryExpressionIdentifierC <$> identifierC,
+        PrimaryExpressionConstantC <$> constantC,
+        PrimaryExpressionStringLiteralC <$> stringLiteralC,
+        PrimaryExpressionExpressionC
+          <$> ( do
+                  pchar '('
+                  expr <- expressionC
+                  pchar ')'
+                  pure expr
+              ),
+        PrimaryExpressionGenericSelectionC <$> genericSelectionC
+      ]
 
-genericSelectionC = do
+genericSelectionC = getnode $ do
   pstr "_Generic"
   pchar '('
-  ass <- wrapWithCSTExpression assignmentExpressionC
+  ass <- assignmentExpressionC
   pchar ','
   gen <- genericAssocListC
   pchar ')'
-  pure
-    GenericSelectionExpr
-      { assignment = ass,
-        associations = gen
-      }
+  pure $
+    GenericSelectionC
+      ass
+      gen
 
-genericAssocListC = do
-  genericAssociationC
-  pkleene
-    ( do
-        (pchar ',')
+genericAssocListC =
+  getnode $
+    GenericAssocListC
+      <$> poneormoreDifferent
         genericAssociationC
-    )
+        ( do
+            pchar ','
+            genericAssociationC
+        )
 
 genericAssociationC =
-  paltv
-    [ do
-        typename <- typeNameC
-        pchar ':'
-        ass <- wrapWithCSTExpression assignmentExpressionC
-        pure (Just typename, ass),
-      do
-        pstr "default"
-        pchar ':'
-        ass <- wrapWithCSTExpression assignmentExpressionC
-        pure (Nothing, ass)
-    ]
+  getnode $
+    paltv
+      [ do
+          typename <- typeNameC
+          pchar ':'
+          ass <- assignmentExpressionC
+          pure $ GenericAssociationTypeNameC typename ass,
+        do
+          pstr "default"
+          pchar ':'
+          GenericAssociationDefaultC <$> assignmentExpressionC
+      ]
 
-postfixExpressionC :: Parser CSTExpressionData
+postfixExpressionC :: Parser (CSTNode PostfixExpressionC)
 postfixExpressionC =
-  paltv
-    [ primaryExpressionC,
-      do
-        left <- wrapWithCSTExpression postfixExpressionC
-        pchar '['
-        right <- wrapWithCSTExpression expressionC
-        pchar ']'
-        pure
-          BinaryOperatorExpr
-            { op = ArraySubscript,
-              left,
-              right
-            },
-      do
-        left <- wrapWithCSTExpression postfixExpressionC
-        paltv
-          [ do
-              pchar '('
-              right <- popt $ wrapWithCSTExpression argumentExpressionListC
-              pchar ')'
-              pure
-                FunctionCallExpr
-                  { fnName = left,
-                    fnArgs = right
-                  },
-            do
-              pchar '.'
-              ident <- identifierExprC
-              pure
-                BinaryOperatorExpr
-                  { op = MemberAccess,
-                    left,
-                    right = ident
-                  },
-            do
-              pstr "->"
-              ident <- identifierExprC
-              pure
-                BinaryOperatorExpr
-                  { op = PointerMemberAccess,
-                    left,
-                    right = ident
-                  },
-            UnaryOperatorExpr {unaryOp = PostfixInc, unaryOperand = left}
-              <$ pstr
-                "++",
-            UnaryOperatorExpr {unaryOp = PostfixDec, unaryOperand = left}
-              <$ pstr
-                "--"
-          ],
-      do
-        pchar '('
-        tn <- typeNameC
-        pchar ')'
-        pchar '{'
-        il <- initializerListC
-        popt $ pchar ','
-        pchar '}'
-        pure
-          InitializerListExpression
-            { initializerList = il,
-              initializerListTypeName = tn
-            }
-    ]
+  getnode $
+    paltv
+      [ do
+          expr <- primaryExpressionC
+          postfixes <- pkleene postfixExpressionInnerCD
+          pure $ PostfixExpressionC expr postfixes,
+        do
+          pchar '('
+          tn <- typeNameC
+          pchar ')'
+          pchar '{'
+          inl <- initializerListC
+          pchar '}'
+          postfixes <- pkleene postfixExpressionInnerCD
+          popt $ pchar ','
+          pure $
+            PostfixExpressionInnerInitializerListCD
+              tn
+              inl
+              postfixes
+      ]
 
-argumentExpressionListC :: Parser CSTExpressionData
-argumentExpressionListC = do
-  initArgExpr <- wrapWithCSTExpression assignmentExpressionC
-  argExprs <- pkleene (fmap snd $ pconcat (pchar ',') $ wrapWithCSTExpression assignmentExpressionC)
-  pure (ArgumentExpressionListExpr (initArgExpr : argExprs))
+postfixExpressionInnerCD :: Parser (CSTNode PostfixExpressionInnerCD)
+postfixExpressionInnerCD =
+  getnode $
+    paltv
+      [ do
+          pchar '['
+          expr <- expressionC
+          pchar ']'
+          pure $
+            PostfixExpressionInnerArraySubscriptCD
+              expr,
+        do
+          pchar '('
+          arglist <- argumentExpressionListC
+          pchar ')'
+          pure $
+            PostfixExpressionInnerFunctionCallCD
+              arglist,
+        do
+          pchar '.'
+          PostfixExpressionInnerDotCD
+            <$> identifierC,
+        do
+          pstr "->"
+          PostfixExpressionInnerArrowCD
+            <$> identifierC,
+        do
+          op <-
+            getnode $
+              paltv
+                [ PostfixExpressionUnaryOpIncrementCD <$ pstr "++",
+                  PostfixExpressionUnaryOpDecrementCD <$ pstr "--"
+                ]
+          pure $ PostfixExpressionInnerUnaryOpCD op
+      ]
+
+argumentExpressionListC = getnode $ do
+  initArgExpr <- assignmentExpressionC
+  argExprs <- pkleene (fmap snd $ pconcat (pchar ',') $ assignmentExpressionC)
+  pure (ArgumentExpressionListC (initArgExpr : argExprs))
 
 unaryExpressionC =
-  paltv
-    [ postfixExpressionC,
-      do
-        paltv [pstr "++", pstr "--"]
-        unaryExpressionC,
-      do
-        unaryOperatorC
-        castExpressionC,
-      do
-        pstr "sizeof"
-        paltv
-          [ unaryExpressionC,
-            do
-              pchar '('
-              tn <- typeNameC
-              pchar ')'
-              pure (SizeofExpr tn)
-          ],
-      do
-        pstr "_Alignof"
-        pchar '('
-        tn <- typeNameC
-        pchar ')'
-        pure (AlignofExpr tn)
-    ]
+  getnode $
+    paltv
+      [ UnaryExpressionPostfixC <$> postfixExpressionC,
+        do
+          op <- unaryOperatorC
+          expr <- castExpressionC
+          pure $ UnaryExpressionGeneralC op expr,
+        do
+          pstr "sizeof"
+          paltv
+            [ UnaryExpressionSizeofC <$> unaryExpressionC,
+              do
+                pchar '('
+                tn <- typeNameC
+                pchar ')'
+                pure (UnaryExpressionSizeofTypeC tn)
+            ],
+        do
+          pstr "_Alignof"
+          pchar '('
+          tn <- typeNameC
+          pchar ')'
+          pure (UnaryExpressionAlignofC tn)
+      ]
 
-unaryOperatorC = paltv (map pchar "&*+-~!")
+-- unaryOperatorC = paltv (map pchar "&*+-~!")
+
+unaryOperatorC =
+  getnode $
+    paltv
+      [ UnaryOpPrefixInc <$ pstr "++",
+        UnaryOpPrefixDec <$ pstr "--",
+        UnaryOpAddressOf <$ pstr "&",
+        UnaryOpDereference <$ pstr "*",
+        UnaryOpPlus <$ pstr "+",
+        UnaryOpMinus <$ pstr "-",
+        UnaryOpBitwiseNot <$ pstr "~",
+        UnaryOpLogicalNot <$ pstr "!"
+      ]
 
 castExpressionC =
-  paltv
-    [ unaryExpressionC,
-      do
-        pchar '('
-        typeNameC
-        pchar ')'
-        castExpressionC
-    ]
+  getnode $
+    paltv
+      [ CastExpressionUnaryExpressionC <$> unaryExpressionC,
+        do
+          pchar '('
+          tn <- typeNameC
+          pchar ')'
+          cast <- castExpressionC
+          pure $ CastExpressionCastC tn cast
+      ]
 
-binaryOpHelper :: [[Char]] -> Parser a -> Parser a -> Parser a
-binaryOpHelper operators thisParser nextParser =
-  paltv
-    [ nextParser,
-      do
-        thisParser
-        paltv (map pstr operators)
-        nextParser
-    ]
+binaryOpHelper ::
+  [([Char], BinaryOp)] ->
+  Parser (CSTNode BinaryOpExpressionCD) ->
+  Parser (CSTNode BinaryOpExpressionCD)
+binaryOpHelper operators nextParser =
+  -- paltv
+  --   [ getnode $ do
+  --       left <- thisParser
+  --       op <- seterr "operator" $ getnode $ paltv (map (\(str, op) -> op <$ pstr str) operators)
+  --       right <- seterr "asdasdasd" nextParser
+  --       pure $ BinaryOpExpressionCD left op right -- ,
+  --       -- nextParser
+  --   ]
+
+  getnode $ do
+    left <- nextParser
+    rights <- pkleene $ do
+      op <-
+        seterr "operator" $
+          getnode $
+            paltv (map (\(str, op) -> op <$ pstr str) operators)
+      right <- nextParser
+      pure (op, right)
+    pure $ BinaryOpExpressionCD left rights
+
+stupidtest =
+  binaryOpHelper
+    [("*", BinaryOpMul)]
+    ( getnode $
+        (BinaryOpDeleteLaterTestCD <$> integerConstantC)
+    )
 
 multiplicativeExpressionC =
-  binaryOpHelper ["*", "/", "%"] multiplicativeExpressionC castExpressionC
+  binaryOpHelper
+    [ ("*", BinaryOpMul),
+      ("/", BinaryOpDiv),
+      ("%", BinaryOpRemainder)
+    ]
+    $ (getnode $ BinaryOpExpressionCastCD <$> castExpressionC)
 
 additiveExpressionC =
-  binaryOpHelper ["+", "-"] additiveExpressionC multiplicativeExpressionC
+  binaryOpHelper
+    [ ("+", BinaryOpAdd),
+      ("-", BinaryOpSub)
+    ]
+    multiplicativeExpressionC
 
 shiftExpressionC =
-  binaryOpHelper ["<<", ">>"] shiftExpressionC additiveExpressionC
+  binaryOpHelper
+    [ ("<<", BinaryOpBitshiftLeft),
+      (">>", BinaryOpBitshiftRight)
+    ]
+    additiveExpressionC
 
 relationalExpressionC =
-  binaryOpHelper ["<", ">", "<=", ">="] relationalExpressionC shiftExpressionC
+  binaryOpHelper
+    [ ("<", BinaryOpLessThan),
+      (">", BinaryOpGreaterThan),
+      ("<=", BinaryOpLesserEq),
+      (">=", BinaryOpGreaterEq)
+    ]
+    shiftExpressionC
 
 equalityExpressionC =
-  binaryOpHelper ["==", "!="] equalityExpressionC relationalExpressionC
+  binaryOpHelper
+    [ ("==", BinaryOpEqualTo),
+      ("!=", BinaryOpNotEqualTo)
+    ]
+    relationalExpressionC
 
 andExpressionC =
-  binaryOpHelper ["&"] andExpressionC equalityExpressionC
+  binaryOpHelper [("&", BinaryOpBitwiseAnd)] equalityExpressionC
 
 exclusiveOrExpressionC =
-  binaryOpHelper ["^"] exclusiveOrExpressionC andExpressionC
+  binaryOpHelper [("^", BinaryOpBitwiseXor)] andExpressionC
 
 inclusiveOrExpressionC =
-  binaryOpHelper ["|"] inclusiveOrExpressionC exclusiveOrExpressionC
+  binaryOpHelper [("|", BinaryOpBitwiseOr)] exclusiveOrExpressionC
 
 logicalAndExpressionC =
-  binaryOpHelper ["&&"] logicalAndExpressionC inclusiveOrExpressionC
+  binaryOpHelper [("&&", BinaryOpLogicalAnd)] inclusiveOrExpressionC
 
 logicalOrExpressionC =
-  binaryOpHelper ["||"] logicalOrExpressionC logicalAndExpressionC
+  binaryOpHelper [("||", BinaryOpLogicalOr)] logicalAndExpressionC
 
-conditionalExpressionC :: Parser CSTExpressionData
 conditionalExpressionC =
-  paltv
-    [ logicalOrExpressionC,
-      do
-        logicalOrExpressionC
-        pchar '?'
-        expressionC
-        pchar ':'
-        conditionalExpressionC
-    ]
+  getnode $
+    paltv
+      [ ConditionalExpressionBinaryOpC <$> logicalOrExpressionC,
+        do
+          cond <- logicalOrExpressionC
+          pchar '?'
+          iftrue <- expressionC
+          pchar ':'
+          iffalse <- conditionalExpressionC
+          pure $
+            ConditionalExpressionTernaryC
+              cond
+              iftrue
+              iffalse
+      ]
 
-assignmentExpressionC :: Parser CSTExpressionData
+assignmentExpressionC :: Parser (CSTNode AssignmentExpressionC)
 assignmentExpressionC =
-  paltv
-    [ conditionalExpressionC,
-      do
-        unaryExpressionC
-        assignmentOperatorC
-        assignmentExpressionC
-    ]
+  getnode $
+    paltv
+      [ AssignmentExpressionConditionalExpressionC
+          <$> conditionalExpressionC,
+        do
+          u <- unaryExpressionC
+          ao <- assignmentOperatorC
+          ae <- assignmentExpressionC
+          pure $
+            AssignmentExpressionBinaryOpExpressionC
+              u
+              ao
+              ae
+      ]
 
 assignmentOperatorC =
-  paltv
-    [ pstr "=",
-      pstr "*=",
-      pstr "/=",
-      pstr "%=",
-      pstr "+=",
-      pstr "-=",
-      pstr "<<=",
-      pstr ">>=",
-      pstr "&=",
-      pstr "^=",
-      pstr "|="
-    ]
+  getnode $
+    paltv $
+      fmap
+        (\(parser, v) -> v <$ parser)
+        [ (pstr "=", AssignmentOperatorEqualsC),
+          (pstr "*=", AssignmentOperatorMulC),
+          (pstr "/=", AssignmentOperatorDivC),
+          (pstr "%=", AssignmentOperatorModC),
+          (pstr "+=", AssignmentOperatorAddC),
+          (pstr "-=", AssignmentOperatorSubC),
+          (pstr "<<=", AssignmentOperatorLeftShiftC),
+          (pstr ">>=", AssignmentOperatorRightShiftC),
+          (pstr "&=", AssignmentOperatorBitwiseAndC),
+          (pstr "^=", AssignmentOperatorBitwiseXorC),
+          (pstr "|=", AssignmentOperatorBitwiseOrC)
+        ]
 
 expressionC =
-  paltv
-    [ assignmentExpressionC,
-      do
-        expressionC
-        pchar ','
+  getnode $
+    ExpressionC
+      <$> poneormoreDifferent
         assignmentExpressionC
-    ]
+        ( do
+            pchar ','
+            assignmentExpressionC
+        )
 
 constantExpressionC = conditionalExpressionC
 
@@ -263,258 +334,304 @@ constantExpressionC = conditionalExpressionC
 
 -- declarationC
 
-declarationSpecifiersC :: Parser CSTDeclSpec
-declarationSpecifiersC = do
-  specifierOrQualifier <-
+declarationSpecifiersC =
+  getnode $
+    DeclarationSpecifiersC <$> poneormore declarationSpecifierCD
+
+declarationSpecifierCD =
+  getnode $
     paltv
-      [ StorageClassSpecifierDSFH <$> storageClassSpecifierC,
-        TypeSpecifierDSFH <$> typeSpecifierC,
-        TypeQualifierDSFH <$> typeQualifierC,
-        FunctionSpecifierDSFH <$> functionSpecifierC,
-        AlignmentSpecifierDSFH <$> alignmentSpecifierC
+      [ DeclarationSpecifierStorageClassSpecifierCD <$> storageClassSpecifierC,
+        DeclarationSpecifierTypeSpecifierCD <$> typeSpecifierC,
+        DeclarationSpecifierTypeQualifierCD <$> typeQualifierC,
+        DeclarationSpecifierFunctionSpecifierCD <$> functionSpecifierC,
+        DeclarationSpecifierAlignmentSpecifierCD <$> alignmentSpecifierC
       ]
-  declspec <- popt declarationSpecifiersC
-  pure $ CSTDeclSpec (specifierOrQualifier, declspec)
 
 -- initDeclaratorListC
 
 -- initDeclaratorC
 
 storageClassSpecifierC =
-  paltv $
-    map
-      (\(str, spec) -> fmap (const spec) (pstr str))
-      [ ("typedef", SCSTypedef),
-        ("extern", SCSExtern),
-        ("static", SCSStatic),
-        ("_Thread_local", SCSThreadLocal),
-        ("auto", SCSAuto),
-        ("register", SCSRegister)
-      ]
-
-typeSpecifierC :: Parser TypeSpecifier
-typeSpecifierC =
-  paltv
-    ( map
-        ( \(str, spec) -> fmap (const spec) (pstr str)
-        )
-        [ ("void", TSVoid),
-          ("char", TSChar),
-          ("short", TSShort),
-          ("int", TSInt),
-          ("long", TSLong),
-          ("float", TSFloat),
-          ("double", TSDouble),
-          ("signed", TSSigned),
-          ("unsigned", TSUnsigned),
-          ("_Bool", TSBool),
-          ("_Complex", TSComplex)
+  getnode $
+    paltv $
+      map
+        (\(str, spec) -> fmap (const spec) (pstr str))
+        [ ("typedef", StorageClassSpecifierTypeDefC),
+          ("extern", StorageClassSpecifierExternC),
+          ("static", StorageClassSpecifierStaticC),
+          ("_Thread_local", StorageClassSpecifierThreadLocalC),
+          ("auto", StorageClassSpecifierAutoC),
+          ("register", StorageClassSpecifierRegisterC)
         ]
-        ++ [ atomicTypeSpecifierC,
-             TSStuctOrUnion <$> structOrUnionSpecifierC,
-             TSEnumSpecifier <$> enumSpecifierC,
-             TSTypedefName <$> typedefNameC
-           ]
-    )
+
+typeSpecifierC =
+  getnode $
+    paltv
+      ( map
+          ( \(str, spec) -> fmap (const spec) (pstr str)
+          )
+          [ ("void", TypeSpecifierVoidC),
+            ("char", TypeSpecifierCharC),
+            ("short", TypeSpecifierShortC),
+            ("int", TypeSpecifierIntC),
+            ("long", TypeSpecifierLongC),
+            ("float", TypeSpecifierFloatC),
+            ("double", TypeSpecifierDoubleC),
+            ("signed", TypeSpecifierSignedC),
+            ("unsigned", TypeSpecifierUnsignedC),
+            ("_Bool", TypeSpecifierBoolC),
+            ("_Complex", TypeSpecifierComplexC)
+          ]
+          ++ [ TypeSpecifierAtomicC <$> atomicTypeSpecifierC,
+               TypeSpecifierStructOrUnionC <$> structOrUnionSpecifierC,
+               TypeSpecifierEnumSpecifierC <$> enumSpecifierC,
+               TypeSpecifierTypedefNameC <$> typedefNameC
+             ]
+      )
 
 structOrUnionSpecifierC =
-  paltv
-    [ do
-        sou <- structOrUnionC
-        name <- popt identifierC
-        pchar '{'
-        fields <- structDeclarationListC
-        pchar '}'
-        pure
-          StructOrUnionSpecifier
-            { structOrUnionName = name,
-              structOrUnionType = sou,
-              structOrUnionFields = Just fields
-            },
-      do
-        sou <- structOrUnionC
-        name <- identifierC
-        pure
-          StructOrUnionSpecifier
-            { structOrUnionType = sou,
-              structOrUnionName = Just name,
-              structOrUnionFields = Nothing
-            }
-    ]
-
-structOrUnionC =
-  paltv
-    [ StructType <$ pstr "struct",
-      UnionType <$ pstr "union"
-    ]
-
-structDeclarationListC = pkleene structDeclarationC
-
-structDeclarationC =
-  paltv
-    [ do
-        specqual <- specifierQualifierListC
-        declarators <- popt structDeclaratorListC
-        pchar ';'
-        pure
-          StructDeclaration
-            { fieldType = specqual,
-              fieldDeclarators = declarators
-            },
-      StructDeclarationStaticAssert <$> staticAssertDeclarationC
-    ]
-
-specifierQualifierListC =
-  pkleene $
+  getnode $
     paltv
-      [ fmap IsTypeSpecifier typeSpecifierC,
-        fmap IsTypeQualifier typeQualifierC
+      [ do
+          sou <- structOrUnionC
+          name <- popt identifierC
+          pchar '{'
+          fields <- structDeclarationListC
+          pchar '}'
+          pure $
+            StructOrUnionSpecifierWithDecListC
+              sou
+              name
+              fields,
+        do
+          sou <- structOrUnionC
+          name <- identifierC
+          pure $
+            StructOrUnionSpecifierC
+              sou
+              name
       ]
 
-structDeclaratorListC = do
-  h <- structDeclaratorC
-  t <-
-    pkleene
-      ( do
-          pchar ','
-          structDeclaratorC
-      )
-  pure (h : t)
+structOrUnionC =
+  getnode $
+    paltv
+      [ StructOrUnionStructC <$ pstr "struct",
+        StructOrUnionUnionC <$ pstr "union"
+      ]
+
+structDeclarationListC =
+  getnode $
+    StructDeclarationListC
+      <$> poneormore structDeclarationC
+
+structDeclarationC =
+  getnode $
+    paltv
+      [ do
+          specqual <- specifierQualifierListC
+          declarators <- popt structDeclaratorListC
+          pchar ';'
+          pure $
+            StructDeclarationC
+              specqual
+              declarators,
+        StructDeclarationStaticAssertC <$> staticAssertDeclarationC
+      ]
+
+specifierQualifierListC =
+  getnode $
+    SpecifierQualifierListC
+      <$> ( poneormore $
+              paltv
+                [ fmap Left typeSpecifierC,
+                  fmap Right typeQualifierC
+                ]
+          )
+
+structDeclaratorListC =
+  getnode $
+    StructDeclaratorListC
+      <$> poneormoreDifferent
+        structDeclaratorC
+        ( do
+            pchar ','
+            structDeclaratorC
+        )
 
 structDeclaratorC =
-  paltv
-    [ do
-        dec <- popt declaratorC
-        expr <- wrapWithCSTExpression constantExpressionC
-        pure $ StructDeclarator dec (Just expr),
-      do
-        dec <- declaratorC
-        pure $ StructDeclarator (Just dec) Nothing
-    ]
+  getnode $
+    paltv
+      [ do
+          dec <- popt declaratorC
+          expr <- constantExpressionC
+          pure $ StructDeclaratorWithExprC dec expr,
+        do
+          dec <- declaratorC
+          pure $ StructDeclaratorC dec
+      ]
 
-enumSpecifierC = do
+enumSpecifierC = getnode $ do
   pstr "enum"
   paltv
-    [ EnumSpecifierDeclaration <$> identifierC,
+    [ EnumSpecifierC <$> identifierC,
       do
         name <- popt identifierC
         pchar '{'
         enumlist <- enumeratorListC
         popt $ pchar ','
         pchar '}'
-        pure $ EnumSpecifierDefinition name enumlist
+        pure $ EnumSpecifierWithDataC name enumlist
     ]
 
-enumeratorListC = do
-  h <- enumeratorC
-  t <-
-    pkleene
+enumeratorListC = getnode $ do
+  EnumeratorListC
+    <$> poneormoreDifferent
+      enumeratorC
       ( do
           pchar ','
           enumeratorC
       )
-  pure (h : t)
 
 enumeratorC =
-  paltv
-    [ (`Enumerator` Nothing) <$> enumerationConstantC,
-      do
-        enumconst <- enumerationConstantC
-        pchar '='
-        expr <- wrapWithCSTExpression constantExpressionC
-        pure $ Enumerator enumconst (Just expr)
-    ]
+  getnode $
+    paltv
+      [ EnumeratorC <$> enumerationConstantC,
+        do
+          enumconst <- enumerationConstantC
+          pchar '='
+          expr <- constantExpressionC
+          pure $ EnumeratorAssignmentC enumconst expr
+      ]
 
-atomicTypeSpecifierC = do
+atomicTypeSpecifierC :: Parser (CSTNode AtomicTypeSpecifierC)
+atomicTypeSpecifierC = getnode $ do
   pstr "_Atomic"
   pchar '('
   typename <- typeNameC
   pchar ')'
-  pure $ TSAtomic typename
+  pure $ AtomicTypeSpecifierC typename
 
-typeQualifierC :: Parser TypeQualifier
 typeQualifierC =
-  paltv
-    ( map
-        (\(str, spec) -> fmap (const spec) (pstr str))
-        [ ("const", TQConst),
-          ("restrict", TQRestrict),
-          ("volatile", TQVolatile),
-          ("_Atomic", TQAtomic)
-        ]
-    )
+  getnode $
+    paltv
+      ( map
+          (\(str, spec) -> fmap (const spec) (pstr str))
+          [ ("const", TypeQualifierConstC),
+            ("restrict", TypeQualifierRestrictC),
+            ("volatile", TypeQualifierVolatileC),
+            ("_Atomic", TypeQualifierAtomicC)
+          ]
+      )
 
 functionSpecifierC =
-  paltv
-    ( map
-        (\(str, spec) -> fmap (const spec) (pstr str))
-        [ ("inline", FSInline),
-          ("_Noreturn", FSNoReturn)
-        ]
-    )
+  getnode $
+    paltv
+      ( map
+          (\(str, spec) -> fmap (const spec) (pstr str))
+          [ ("inline", FunctionSpecifierInlineC),
+            ("_Noreturn", FunctionSpecifierNoReturnC)
+          ]
+      )
 
-alignmentSpecifierC = do
+alignmentSpecifierC :: Parser (CSTNode AlignmentSpecifierC)
+alignmentSpecifierC = getnode $ do
   pstr "_Alignas"
   pchar '('
   ret <-
     paltv
-      [ ASTypeName <$> typeNameC,
-        ASConstantExpression <$> wrapWithCSTExpression constantExpressionC
+      [ AlignmentSpecifierC <$> (Left <$> typeNameC),
+        AlignmentSpecifierC <$> Right <$> constantExpressionC
       ]
   pchar ')'
   pure ret
 
-declaratorC = do
-  popt pointerC
-  directDeclaratorC
+declaratorC = getnode $ do
+  ptr <- popt pointerC
+  ddc <- directDeclaratorC
+  pure $ DeclaratorC ptr ddc
 
-directDeclaratorC = do
-  paltv
-    [ identifierC,
-      do
-        pchar '('
-        declaratorC
-        pchar ')'
-    ]
-  pkleene
-    ( paltv
-        [ do
-            pchar '['
+directDeclaratorC = getnode $ do
+  dec <-
+    paltv
+      [ Left <$> identifierC,
+        do
+          pchar '('
+          dec <- Right <$> declaratorC
+          pchar ')'
+          pure dec
+      ]
+  suffixes <- pkleene directDeclaratorSuffixCD
+  pure $ DirectDeclaratorC dec suffixes
+
+directDeclaratorSuffixCD =
+  getnode $
+    paltv
+      [ do
+          pchar '['
+          arr <-
             paltv
               [ do
-                  popt typeQualifierListC
-                  popt assignmentExpressionC,
+                  tql <- popt typeQualifierListC
+                  ass <- popt assignmentExpressionC
+                  pure $
+                    DirectDeclaratorSuffixArrayC
+                      tql
+                      ass,
                 do
                   pstr "static"
-                  popt typeQualifierListC
-                  assignmentExpressionC,
+                  tql <- popt typeQualifierListC
+                  ass <- assignmentExpressionC
+                  pure $
+                    DirectDeclaratorSuffixStaticArrayC
+                      tql
+                      ass,
                 do
-                  typeQualifierListC
+                  tql <- typeQualifierListC
                   pstr "static"
-                  assignmentExpressionC,
+                  ass <- assignmentExpressionC
+                  pure $
+                    DirectDeclaratorSuffixStaticArrayC
+                      (Just tql)
+                      ass,
                 do
-                  popt typeQualifierListC
+                  tql <- popt typeQualifierListC
                   pchar '*'
+                  pure $
+                    DirectDeclaratorSuffixPointerArrayC
+                      tql
               ]
-            pchar ']',
-          do
-            pchar '('
-            paltv
-              [ parameterTypeListC,
-                popt identifierListC
-              ]
-            pchar ')'
-        ]
-    )
+          pchar ']'
+          pure arr,
+        do
+          pchar '('
+          ptl <- parameterTypeListC
+          pchar ')'
+          pure $
+            DirectDeclaratorSuffixParamTypeListC
+              ptl,
+        do
+          pchar '('
+          idl <- popt identifierListC
+          pchar ')'
+          pure $
+            DirectDeclaratorSuffixIdentifierListC
+              idl
+      ]
 
 pointerC =
-  pkleene $ do
-    pchar '*'
-    concat . toList <$> popt typeQualifierListC
+  getnode $
+    PointerC
+      <$> ( pkleene $ do
+              pchar '*'
+              pointerElementCD
+          )
 
-typeQualifierListC = pkleene typeQualifierC
+pointerElementCD = getnode $ PointerElementCD <$> popt typeQualifierListC
 
-parameterTypeListC = do
+typeQualifierListC = getnode $ TypeQualifierListC <$> poneormore typeQualifierC
+
+parameterTypeListC = getnode $ do
   plist <- parameterListC
   variadic <-
     popt
@@ -522,141 +639,165 @@ parameterTypeListC = do
           pchar ','
           pstr "..."
       )
-  pure (plist, isJust variadic)
+  pure $ ParameterTypeListC plist (isJust variadic)
 
-parameterListC = do
-  firstDec <- parameterDeclarationC
-  nextDecs <-
-    pkleene
-      ( do
-          pchar ','
-          parameterDeclarationC
-      )
-  pure firstDec : nextDecs
+parameterListC :: Parser (CSTNode ParameterListC)
+parameterListC =
+  getnode $
+    ParameterListC
+      <$> poneormoreDifferent
+        parameterDeclarationC
+        ( do
+            pchar ','
+            parameterDeclarationC
+        )
 
-parameterDeclarationC = do
+parameterDeclarationC = getnode $ do
   declspec <- declarationSpecifiersC
-  idk <- -- TODO: rename
+  declarator <-
     paltv
       [ Left <$> declaratorC,
         Right <$> popt abstractDeclaratorC
       ]
-  pure (declspec, idk)
+  pure $ ParameterDeclarationC declspec declarator
 
--- identifierListC
+identifierListC =
+  getnode $
+    IdentifierListC
+      <$> poneormoreDifferent
+        identifierC
+        ( do
+            pchar ','
+            identifierC
+        )
 
-typeNameC :: Parser CSTTypeName
-typeNameC = do
+typeNameC :: Parser (CSTNode TypeNameC)
+typeNameC = getnode $ do
   specQualList <- specifierQualifierListC
-  popt abstractDeclaratorC
+  absdec <- popt abstractDeclaratorC
+  pure $ TypeNameC specQualList absdec
 
-abstractDeclaratorC :: Parser AbstractDeclarator
 abstractDeclaratorC =
-  paltv
-    [ do
-        ptr <- popt pointerC
-        dad <- directAbstractDeclaratorC
-        pure $ AbstractDeclarator (ptr, Just dad),
-      fmap (\ptr -> AbstractDeclarator (Just ptr, Nothing)) pointerC
-    ]
+  getnode $
+    paltv
+      [ AbstractDeclaratorPointerC <$> pointerC,
+        do
+          ptr <- popt pointerC
+          dad <- directAbstractDeclaratorC
+          pure $
+            AbstractDeclaratorDirectC
+              ptr
+              dad
+      ]
 
-directAbstractDeclaratorC :: Parser [DirectAbstractDeclaratorElement]
-directAbstractDeclaratorC = do
-  popt
-    ( do
-        pchar '('
-        ad <- abstractDeclaratorC
-        pchar ')'
-        pure ad
-    )
-  patleast
-    ( paltv
-        [ do
-            pchar '['
-            ret <-
-              paltv
-                [ ( \ql ->
-                      ArrayDADE Nothing (concat . toList $ ql) False
-                  )
-                    <$> popt typeQualifierListC,
-                  ( \ass ->
-                      ArrayDADE ass [] False
-                  )
-                    <$> wrapWithMaybeCSTExpression
-                      (popt assignmentExpressionC),
-                  do
-                    pstr "static"
-                    tql <- concat . toList <$> popt typeQualifierListC
-                    ass <- wrapWithCSTExpression assignmentExpressionC
-                    pure $ ArrayDADE (Just ass) tql True,
-                  do
-                    tql <- concat . toList <$> popt typeQualifierListC
-                    pstr "static"
-                    ass <- wrapWithCSTExpression assignmentExpressionC
-                    pure $ ArrayDADE (Just ass) tql True,
-                  AsteriskDADE <$ pchar '*'
-                ]
-            pchar ']'
-            pure ret,
-          do
-            pchar '('
-            parameterList <- popt parameterTypeListC
-            pchar ')'
-            pure parameterList
-        ]
-    )
-    1
+directAbstractDeclaratorC = getnode $ do
+  ad <-
+    popt
+      ( do
+          pchar '('
+          ad <- abstractDeclaratorC
+          pchar ')'
+          pure ad
+      )
+  elems <- pkleene directAbstractDeclaratorElementCD
+  pure $ DirectAbstractDeclaratorC ad elems
+
+directAbstractDeclaratorElementCD =
+  getnode $
+    paltv
+      [ do
+          pchar '['
+          tql <- popt typeQualifierListC
+          ass <- popt assignmentExpressionC
+          pchar ']'
+          pure $ DirectAbstractDeclaratorElementArray tql ass,
+        do
+          pchar '['
+          pstr "static"
+          tql <- popt typeQualifierListC
+          ass <- assignmentExpressionC
+          pchar ']'
+          pure $ DirectAbstractDeclaratorStaticArray tql ass,
+        do
+          pchar '['
+          tql <- typeQualifierListC
+          pstr "static"
+          ass <- assignmentExpressionC
+          pchar ']'
+          pure $
+            DirectAbstractDeclaratorStaticArray (Just tql) ass,
+        do
+          pchar '['
+          pchar '*'
+          pchar ']'
+          pure DirectAbstractDeclaratorStarArray,
+        do
+          pchar '('
+          ptl <- popt parameterTypeListC
+          pchar ')'
+          pure $
+            DirectAbstractDeclaratorParameterList
+              ptl
+      ]
 
 typedefNameC = identifierC
 
 initializerC =
   paltv
-    [ InitializerInitializer <$> wrapWithCSTExpression assignmentExpressionC,
-      do
+    [ getnode $ InitializerAssignmentC <$> assignmentExpressionC,
+      getnode $ do
         pchar '{'
         init <- initializerListC
         popt $ pchar ','
         pchar '}'
-        pure (InitializerListInitializer init)
+        pure (InitializerInitializerListC init)
     ]
 
 initializerListC =
-  InitializerList
-    <$> pkleene
-      ( do
-          desg <- popt designationC
-          init <- initializerC
-          pure (desg, init)
-      )
+  getnode $
+    InitializerListC
+      <$> poneormoreDifferent
+        ( do
+            desg <- popt designationC
+            init <- initializerC
+            pure (desg, init)
+        )
+        ( do
+            pchar ','
+            desg <- popt designationC
+            init <- initializerC
+            pure (desg, init)
+        )
 
-designationC = do
-  dl <- designatorListC
+designationC = getnode $ do
+  dl <- DesignationC <$> designatorListC
   pchar '='
   pure dl
 
--- TODO: this
+designatorListC =
+  getnode $
+    DesignatorListC <$> poneormore designatorC
 
-designatorListC = Designation <$> patleast designatorC 1
-
-designatorC :: Parser Designator
 designatorC =
   paltv
-    [ do
+    [ getnode $ do
         pchar '['
-        expr <- ExpressionDesignator <$> wrapWithCSTExpression constantExpressionC
+        expr <-
+          DesignatorArrayC
+            <$> (constantExpressionC)
         pchar ']'
         pure expr,
-      do
+      getnode $ do
         pchar '.'
-        IdentifierDesignator <$> identifierC
+        DesignatorDotC <$> identifierC
     ]
 
-staticAssertDeclarationC = do
+staticAssertDeclarationC = getnode $ do
   pstr "_Static_assert"
   pchar '('
-  expr <- wrapWithCSTExpression constantExpressionC
+  expr <- constantExpressionC
   pchar ','
   str <- stringLiteralC
   pchar ')'
   pchar ';'
-  pure $ StaticAssertDeclaration expr str
+  pure $ StaticAssertDeclarationC expr str

@@ -9,34 +9,42 @@ import GHC.Real ((%))
 import GrammarTypes
 import Parsing
 
-wrapWithCSTExpression :: Parser CSTExpressionData -> Parser CSTExpression
-wrapWithCSTExpression parser = do
-  start <- getpp
-  exprData <- parser
-  end <- getpp
-  pure
-    CSTExpression
-      { exprData,
-        start,
-        end
-      }
+-- getnode :: Parser a -> Parser (CSTNode a)
+-- getnode parser =
+--   Parser
+--     { parse = \pp -> case parse
+--         ( do
+--             start <- getpp
+--             exprData <- parser
+--             end <- getpp
+--             pure
+--               ( CSTExpression
+--                   exprData
+--                   start
+--                   end
+--               )
+--         )
+--         pp of
+--         Just v' -> Just v'
+--         Nothing -> Just (CSTError "TODO write good err msgs" pp pp, pp)
+--     }
 
 -- TODO: Probably find a better way of doing this
-wrapWithMaybeCSTExpression parser = do
-  start <- getpp
-  exprDataMaybe <- parser
-  end <- getpp
-  case exprDataMaybe of
-    Just expr ->
-      pure
-        ( Just
-            CSTExpression
-              { exprData = expr,
-                start,
-                end
-              }
-        )
-    Nothing -> pure Nothing
+-- getnodeMaybe parser = do
+--   start <- getpp
+--   exprDataMaybe <- parser
+--   end <- getpp
+--   case exprDataMaybe of
+--     Just expr ->
+--       pure
+--         ( Just
+--             ( CSTExpression
+--                 expr
+--                 start
+--                 end
+--             )
+--         )
+--     Nothing -> pure Nothing
 
 --- C grammar lifted directly from https://open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf
 

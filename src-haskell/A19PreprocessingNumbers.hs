@@ -1,7 +1,6 @@
 module A19PreprocessingNumbers where
 
-import A13Identifiers
-import A15Constants
+import A13A14A15
 import Parsing
 
 --- A.1.9 Preprocessing Numbers
