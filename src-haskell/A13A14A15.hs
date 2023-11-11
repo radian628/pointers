@@ -6,6 +6,7 @@ import Data.Maybe
 import GrammarTypes
 import GrammarUtils
 import Parsing
+import Tokenizer
 
 --- A.1.3 Identifiers
 
