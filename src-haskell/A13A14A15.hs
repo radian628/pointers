@@ -6,11 +6,10 @@ import Data.Maybe
 import GrammarTypes
 import GrammarUtils
 import Parsing
-import Tokenizer
 
 --- A.1.3 Identifiers
 
-identifierC = getnode $ do
+identifierC = do
   init <- identifierNondigitC
   rest <- pkleene (paltv [digitC, identifierNondigitC])
   pure (init : rest)
@@ -25,7 +24,7 @@ inBetween x min max = x >= min && x <= max
 
 nonDigitC = pfn (\c -> inBetween (ord c) 65 90 || inBetween (ord c) 97 122 || c == '_')
 
-digitC :: Parser Char
+digitC :: StrParser Char
 digitC = pfn isDigit
 
 --- A.1.4 Universal Character Name
@@ -53,11 +52,10 @@ hexQuadC = do
 --- A.1.5 Constants
 
 constantC =
-  getnode $
-    paltv
-      [ ConstantIntCD <$> integerConstantC,
-        ConstantFloatCD <$> floatingConstantC
-      ]
+  paltv
+    [ ConstantIntCD <$> integerConstantC,
+      ConstantFloatCD <$> floatingConstantC
+    ]
 
 integerConstantC = getnode $ do
   constant <-
@@ -74,17 +72,17 @@ integerConstantC = getnode $ do
         suffix
     )
 
-decimalConstantC :: Parser (CSTNode Integer)
+decimalConstantC :: StrParser (TokenNode Integer)
 decimalConstantC =
   getnode $
     fmap read (pconcatv [fmap (: []) nonzeroDigitC, pkleene digitC] (++))
 
-octalConstantC :: Parser (CSTNode Integer)
+octalConstantC :: StrParser (TokenNode Integer)
 octalConstantC =
   getnode $
     fmap read (pconcatv [pstr "0", pkleene octalDigitC] (++))
 
-hexadecimalConstantC :: Parser (CSTNode Integer)
+hexadecimalConstantC :: StrParser (TokenNode Integer)
 hexadecimalConstantC =
   getnode $
     fmap read (pconcatv [hexadecimalPrefixC, pkleene hexadecimalDigitC] (++))
@@ -177,7 +175,7 @@ hexadecimalFloatingConstantC =
             )
       ]
 
-fractionalConstantC :: Parser [Char]
+fractionalConstantC :: StrParser [Char]
 fractionalConstantC =
   paltv
     [ pconcatv [fmap (concat . toList) (popt digitSequenceC), pstr ".", digitSequenceC] (++),
@@ -209,7 +207,7 @@ hexadecimalFractionalConstantC =
 
 stripLeadingPlus (x : xs) = if x == '+' then xs else x : xs
 
-binaryExponentPartC :: Parser Double
+binaryExponentPartC :: StrParser Double
 binaryExponentPartC = do
   palt (pchar 'p') (pchar 'P')
   fmap (read . stripLeadingPlus) (pconcatv [toList <$> popt signC, digitSequenceC] (++))
@@ -217,7 +215,7 @@ binaryExponentPartC = do
 hexadecimalDigitSequenceC =
   pconcatv [fmap (: []) hexadecimalDigitC, pkleene hexadecimalDigitC] (++)
 
-floatingSuffixC :: Parser FloatPrecision
+floatingSuffixC :: StrParser FloatPrecision
 floatingSuffixC =
   paltv
     [ fmap (const Float) (paltv (map (fmap (: []) . pchar) "fF")),
@@ -227,11 +225,19 @@ floatingSuffixC =
 enumerationConstantC = identifierC
 
 characterConstantC = do
-  prefix <- paltv (map pchar "LuU")
+  prefix <-
+    paltv
+      ( map
+          (\(code, str) -> code <$ pstr str)
+          [ (CharEncodeTypeL, "L"),
+            (CharEncodeTypeSmallU, "u"),
+            (CharEncodeTypeBigU, "U")
+          ]
+      )
   pchar '\''
   seq <- cCharSequenceC
   pchar '\''
-  pure (seq, prefix)
+  pure (prefix, seq)
 
 cCharSequenceC = pkleene cCharC
 
@@ -262,7 +268,7 @@ simpleEscapeSequenceC = do
       '\v' <$ pchar 'v'
     ]
 
-octalEscapeSequenceC :: Parser Char
+octalEscapeSequenceC :: StrParser Char
 octalEscapeSequenceC = do
   pchar '\\'
   fmap (chr . read . (++) "0o") (prange octalDigitC 1 3)

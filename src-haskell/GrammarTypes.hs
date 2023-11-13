@@ -3,8 +3,248 @@
 module GrammarTypes where
 
 import Data.List.NonEmpty (NonEmpty)
+import Language.Haskell.TH.Syntax (Lift)
 import Parsing
-import Tokenizer
+
+--- TOKENIZER
+
+data Punctuator
+  = PSquareOpen
+  | PSquareClosed
+  | PParenOpen
+  | PParenClosed
+  | PCurlyOpen
+  | PCurlyClosed
+  | PDot
+  | PArrow
+  | PInc
+  | PDec
+  | PAmpersand
+  | PStar
+  | PPlus
+  | PMinus
+  | PTilde
+  | PExclamation
+  | PSlash
+  | PPercent
+  | PShiftLeft
+  | PShiftRight
+  | PLessThan
+  | PGreaterThan
+  | PLessEqual
+  | PGreaterEqual
+  | PEqual
+  | PNotEqual
+  | PXor
+  | POr
+  | PLogicalAnd
+  | PLogicalOr
+  | PQuestionMark
+  | PColon
+  | PSemicolon
+  | PEllipsis
+  | PAssignment
+  | PTimesEquals
+  | PDivEquals
+  | PModEquals
+  | PAddEquals
+  | PSubEquals
+  | PLeftShiftEquals
+  | PRightShiftEquals
+  | PAndEquals
+  | PXorEquals
+  | POrEquals
+  | PComma
+  | PHash
+  | PDoubleHash
+  deriving (Show, Eq, Lift)
+
+--- not including the digraphs cuz they're just diff symbols
+
+data Keyword
+  = KeywordAuto
+  | KeywordBreak
+  | KeywordCase
+  | KeywordChar
+  | KeywordConst
+  | KeywordContinue
+  | KeywordDefault
+  | KeywordDo
+  | KeywordDouble
+  | KeywordElse
+  | KeywordEnum
+  | KeywordExtern
+  | KeywordFloat
+  | KeywordFor
+  | KeywordGoto
+  | KeywordIf
+  | KeywordInline
+  | KeywordInt
+  | KeywordLong
+  | KeywordRegister
+  | KeywordRestrict
+  | KeywordReturn
+  | KeywordShort
+  | KeywordSigned
+  | KeywordSizeof
+  | KeywordStatic
+  | KeywordStruct
+  | KeywordSwitch
+  | KeywordTypedef
+  | KeywordUnion
+  | KeywordUnsigned
+  | KeywordVoid
+  | KeywordVolatile
+  | KeywordWhile
+  | KeywordAlignAs
+  | KeywordAlignOf
+  | KeywordAtomic
+  | KeywordBool
+  | KeywordComplex
+  | KeywordGeneric
+  | KeywordImaginary
+  | KeywordNoreturn
+  | KeywordStaticAssert
+  | KeywordThreadLocal
+  deriving (Show, Eq)
+
+--- various general enum types
+
+data BinaryOp
+  = BinaryOpAdd
+  | BinaryOpSub
+  | BinaryOpMul
+  | BinaryOpDiv
+  | BinaryOpRemainder
+  | BinaryOpLogicalAnd
+  | BinaryOpLogicalOr
+  | BinaryOpBitwiseAnd
+  | BinaryOpBitwiseOr
+  | BinaryOpBitwiseXor
+  | BinaryOpBitshiftLeft
+  | BinaryOpBitshiftRight
+  | BinaryOpGreaterThan
+  | BinaryOpLessThan
+  | BinaryOpGreaterEq
+  | BinaryOpLesserEq
+  | BinaryOpEqualTo
+  | BinaryOpNotEqualTo
+  | BinaryOpMemberAccess
+  | BinaryOpPointerMemberAccess
+  | BinaryOpComma
+  | BinaryOpTypecast
+  | BinaryOpArraySubscript
+  deriving (Show)
+
+data UnaryOp
+  = UnaryOpPrefixInc
+  | UnaryOpPostfixInc
+  | UnaryOpPrefixDec
+  | UnaryOpPostfixDec
+  | UnaryOpBitwiseNot
+  | UnaryOpLogicalNot
+  | UnaryOpDereference
+  | UnaryOpAddressOf
+  | UnaryOpPlus
+  | UnaryOpMinus
+  deriving (Show)
+
+data Precision
+  = Char
+  | Short
+  | Int
+  | Long
+  | LongLong
+  deriving (Show, Eq)
+
+data FloatPrecision
+  = Float
+  | Double
+  | LongDouble
+  deriving (Show, Eq)
+
+data CharEncodingType
+  = CharEncodeTypeL
+  | CharEncodeTypeSmallU
+  | CharEncodeTypeBigU
+  deriving (Show, Eq)
+
+data StringEncodingType
+  = CharC
+  | Utf8
+  | WcharT
+  | Char16T
+  | Char32T
+  deriving (Show, Eq)
+
+data TypeQualifier
+  = TQConst
+  | TQRestrict
+  | TQVolatile
+  | TQAtomic
+  deriving (Show)
+
+data FunctionSpecifier
+  = FSInline
+  | FSNoReturn
+  deriving (Show)
+
+data AlignmentSpecifier
+  = ASTypeName Placeholder
+  | ASConstantExpression Placeholder
+  deriving (Show)
+
+data Placeholder = Placeholder
+  deriving (Show)
+
+--- Tokens and stuff
+
+type TokenNode = ParseNode Char
+
+data StringLiteralC
+  = StringLiteralC
+      (TokenNode [Char])
+      (Maybe (TokenNode StringEncodingType))
+  deriving (Show, Eq)
+
+data IntLiteralC
+  = IntLiteralC (ParseNode Char Integer) (Maybe (ParseNode Char (Precision, Bool)))
+  deriving (Show, Eq)
+
+data UniversalCharacterNameC
+  = UniversalCharacterNameOneQuadC
+      (ParseNode Char Integer)
+  | UniversalCharacterNameTwoQuadC
+      (ParseNode Char Integer)
+      (ParseNode Char Integer)
+  deriving (Show, Eq)
+
+data FloatExprC
+  = FloatExprC Double FloatPrecision
+  deriving (Show, Eq)
+
+data ConstantCD
+  = ConstantIntCD (TokenNode IntLiteralC)
+  | ConstantFloatCD (TokenNode FloatExprC)
+  deriving (Show, Eq)
+
+data Token
+  = TokenKeyword Keyword
+  | TokenIdentifier [Char] --- also an enum
+  | TokenConstant ConstantCD
+  | TokenCharacterConstant CharEncodingType [Char]
+  | TokenStringLiteral StringLiteralC
+  | TokenPunctuator Punctuator
+  | TokenQuotedHeaderName [Char]
+  | TokenBracketedHeaderName [Char]
+  | TokenSkip SkipTokenC
+  deriving (Show, Eq)
+
+type CSTNode = ParseNode (ParseNode Char Token)
+
+type StrParser = Parser Char
+
+type TokenParser = Parser (ParseNode Char Token)
 
 --- naming scheme
 --- All types that end with "C" correspond
@@ -14,11 +254,6 @@ import Tokenizer
 --- types that aren't 1:1 with the C grammar.
 
 --- A.2.1 Expressions
-
-data ConstantCD
-  = ConstantIntCD (CSTNode IntLiteralC)
-  | ConstantFloatCD (CSTNode FloatExprC)
-  deriving (Show)
 
 data PrimaryExpressionC
   = PrimaryExpressionIdentifierC (CSTNode [Char])
@@ -166,7 +401,9 @@ data DeclarationSpecifierCD
   | DeclarationSpecifierAlignmentSpecifierCD (CSTNode AlignmentSpecifierC)
   deriving (Show)
 
-data InitDeclaratorListC = InitDeclaratorListC [CSTNode InitDeclaratorC]
+data InitDeclaratorListC
+  = InitDeclaratorListC
+      (NonEmpty (CSTNode InitDeclaratorC))
   deriving (Show)
 
 data InitDeclaratorC
@@ -305,7 +542,7 @@ data DirectDeclaratorSuffixCD
       (Maybe (CSTNode IdentifierListC))
   deriving (Show)
 
-data PointerC = PointerC [CSTNode PointerElementCD]
+data PointerC = PointerC (NonEmpty (CSTNode PointerElementCD))
   deriving (Show)
 
 data PointerElementCD = PointerElementCD (Maybe (CSTNode TypeQualifierListC))
@@ -397,12 +634,12 @@ data StaticAssertDeclarationC
 --- A.2.3 Statements
 
 data StatementC
-  = StatementLabeledStatementC LabeledStatementC
-  | StatementCompoundStatementC CompoundStatementC
-  | StatementExpressionStatementC ExpressionStatementC
-  | StatementSelectionStatementC SelectionStatementC
-  | StatementIterationStatementC IterationStatementC
-  | StatementJumpStatementC JumpStatementC
+  = StatementLabeledStatementC (CSTNode LabeledStatementC)
+  | StatementCompoundStatementC (CSTNode CompoundStatementC)
+  | StatementExpressionStatementC (CSTNode ExpressionStatementC)
+  | StatementSelectionStatementC (CSTNode SelectionStatementC)
+  | StatementIterationStatementC (CSTNode IterationStatementC)
+  | StatementJumpStatementC (CSTNode JumpStatementC)
   deriving (Show)
 
 data LabeledStatementC
@@ -412,7 +649,7 @@ data LabeledStatementC
   deriving (Show)
 
 data CompoundStatementC
-  = CompoundStatementC [Maybe (CSTNode BlockItemListC)]
+  = CompoundStatementC (Maybe (CSTNode BlockItemListC))
   deriving (Show)
 
 data BlockItemListC
@@ -449,7 +686,7 @@ data IterationStatementC
       (Maybe (CSTNode ExpressionC))
       (CSTNode StatementC)
   | IterationStatementDecForC
-      (CSTNode (Maybe DeclarationC))
+      (Maybe (CSTNode DeclarationC))
       (Maybe (CSTNode ExpressionC))
       (Maybe (CSTNode ExpressionC))
       (CSTNode StatementC)
@@ -459,7 +696,7 @@ data JumpStatementC
   = JumpStatementGotoC (CSTNode [Char])
   | JumpStatementContinueC
   | JumpStatementBreakC
-  | JumpStatementReturnC (CSTNode (Maybe ExpressionC))
+  | JumpStatementReturnC (Maybe (CSTNode ExpressionC))
   deriving (Show)
 
 --- A.2.4 External definitions

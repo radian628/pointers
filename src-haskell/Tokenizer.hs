@@ -1,153 +1,143 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Tokenizer where
 
+import A12Keywords
+import A13A14A15
+import A16StringLiterals (stringLiteralC)
+import A17Punctuators (punctuatorC)
+import A18HeaderNames
+import GrammarTypes
+import Language.Haskell.TH
+import Language.Haskell.TH.Syntax (lift)
 import Parsing
 
-data Keyword
-  = KeywordAuto
-  | KeywordBreak
-  | KeywordCase
-  | KeywordChar
-  | KeywordConst
-  | KeywordContinue
-  | KeywordDefault
-  | KeywordDo
-  | KeywordDouble
-  | KeywordElse
-  | KeywordEnum
-  | KeywordExtern
-  | KeywordFloat
-  | KeywordFor
-  | KeywordGoto
-  | KeywordIf
-  | KeywordInline
-  | KeywordInt
-  | KeywordLong
-  | KeywordRegister
-  | KeywordRestrict
-  | KeywordReturn
-  | KeywordShort
-  | KeywordSigned
-  | KeywordSizeof
-  | KeywordStatic
-  | KeywordStruct
-  | KeywordSwitch
-  | KeywordTypedef
-  | KeywordUnion
+parseTokenC =
+  getnode $
+    paltv
+      [ TokenKeyword
+          <$> keywordC,
+        TokenIdentifier
+          <$> identifierC,
+        TokenConstant
+          <$> constantC,
+        uncurry TokenCharacterConstant
+          <$> characterConstantC,
+        TokenStringLiteral
+          <$> stringLiteralC,
+        TokenPunctuator <$> punctuatorC,
+        TokenSkip <$> skipC,
+        headerNameC
+      ]
 
---- various general enum types
+parseTokenListC = pkleene parseTokenC
 
-data BinaryOp
-  = BinaryOpAdd
-  | BinaryOpSub
-  | BinaryOpMul
-  | BinaryOpDiv
-  | BinaryOpRemainder
-  | BinaryOpLogicalAnd
-  | BinaryOpLogicalOr
-  | BinaryOpBitwiseAnd
-  | BinaryOpBitwiseOr
-  | BinaryOpBitwiseXor
-  | BinaryOpBitshiftLeft
-  | BinaryOpBitshiftRight
-  | BinaryOpGreaterThan
-  | BinaryOpLessThan
-  | BinaryOpGreaterEq
-  | BinaryOpLesserEq
-  | BinaryOpEqualTo
-  | BinaryOpNotEqualTo
-  | BinaryOpMemberAccess
-  | BinaryOpPointerMemberAccess
-  | BinaryOpComma
-  | BinaryOpTypecast
-  | BinaryOpArraySubscript
-  deriving (Show)
+eqToToken x = getnode $ pfn (== x)
 
-data UnaryOp
-  = UnaryOpPrefixInc
-  | UnaryOpPostfixInc
-  | UnaryOpPrefixDec
-  | UnaryOpPostfixDec
-  | UnaryOpBitwiseNot
-  | UnaryOpLogicalNot
-  | UnaryOpDereference
-  | UnaryOpAddressOf
-  | UnaryOpPlus
-  | UnaryOpMinus
-  deriving (Show)
+doskip p = do
+  pkleene skipT
+  v <- p
+  pkleene skipT
+  pure v
 
-data Precision
-  = Char
-  | Short
-  | Int
-  | Long
-  | LongLong
-  deriving (Show)
+kw x = doskip $ getnode $ unwrapTokenAndModify $ \i ->
+  case i of
+    TokenKeyword kw -> if x == kw then Just x else Nothing
+    _ -> Nothing
 
-data FloatPrecision
-  = Float
-  | Double
-  | LongDouble
-  deriving (Show)
+identifierT = doskip $ getnode $ unwrapTokenAndModify $ \i ->
+  case i of
+    TokenIdentifier str -> Just str
+    _ -> Nothing
 
-data StringEncodingType
-  = CharC
-  | Utf8
-  | WcharT
-  | Char16T
-  | Char32T
-  deriving (Show)
+constantT = doskip $
+  getnode $
+    unwrapTokenAndModify $
+      \t -> case t of
+        TokenConstant x -> Just x
+        _ -> Nothing
 
-data TypeQualifier
-  = TQConst
-  | TQRestrict
-  | TQVolatile
-  | TQAtomic
-  deriving (Show)
+charConstantT = doskip $
+  unwrapTokenAndModify $
+    \t -> case t of
+      TokenCharacterConstant a b -> Just (a, b)
+      _ -> Nothing
 
-data FunctionSpecifier
-  = FSInline
-  | FSNoReturn
-  deriving (Show)
+stringLiteralT = doskip $
+  unwrapTokenAndModify $
+    \t -> case t of
+      TokenStringLiteral str -> Just str
+      _ -> Nothing
 
-data AlignmentSpecifier
-  = ASTypeName Placeholder
-  | ASConstantExpression Placeholder
-  deriving (Show)
+punctuatorT x = doskip $ getnode $ unwrapTokenAndModify $ \i ->
+  case i of
+    TokenPunctuator p -> if x == p then Just x else Nothing
+    _ -> Nothing
 
-data Placeholder = Placeholder
-  deriving (Show)
+skipT = getnode $ unwrapTokenAndModify $ \i ->
+  case i of
+    TokenSkip x -> Just x
+    _ -> Nothing
 
---- Tokens and stuff
+quotedHeaderNameT x = doskip $
+  unwrapTokenAndModify $
+    \t -> case t of
+      TokenQuotedHeaderName name -> Just name
+      _ -> Nothing
 
-data StringLiteralC
-  = StringLiteralC
-      (CSTNode [Char])
-      (Maybe (CSTNode StringEncodingType))
-  deriving (Show)
+bracketedHeaderNameT x = doskip $
+  unwrapTokenAndModify $
+    \t -> case t of
+      TokenBracketedHeaderName name -> Just name
+      _ -> Nothing
 
-data IntLiteralC
-  = IntLiteralC (CSTNode Integer) (Maybe (CSTNode (Precision, Bool)))
-  deriving (Show)
-
-data UniversalCharacterNameC
-  = UniversalCharacterNameOneQuadC
-      (CSTNode Integer)
-  | UniversalCharacterNameTwoQuadC
-      (CSTNode Integer)
-      (CSTNode Integer)
-  deriving (Show)
-
-data FloatExprC
-  = FloatExprC Double FloatPrecision
-  deriving (Show)
-
-data Token
-  = TokenKeyword Keyword
-  | TokenIdentifier [Char] --- also an enum
-  | TokenIntegerConstant IntLiteralC
-  | TokenFloatingConstant FloatExprC
-  | TokenCharacterConstant StringEncodingType Char
-  | TokenStringLiteral
-  | TokenPunctuator [Char]
-  | TokenQuotedHeaderName [Char]
-  | TokenBracketedHeaderName [Char]
+strToPunct str = case str of
+  "[" -> PSquareOpen
+  "]" -> PSquareClosed
+  "(" -> PParenOpen
+  ")" -> PParenClosed
+  "{" -> PCurlyOpen
+  "}" -> PCurlyClosed
+  "." -> PDot
+  "->" -> PArrow
+  "++" -> PInc
+  "--" -> PDec
+  "&" -> PAmpersand
+  "*" -> PStar
+  "+" -> PPlus
+  "-" -> PMinus
+  "~" -> PTilde
+  "!" -> PExclamation
+  "/" -> PSlash
+  "%" -> PPercent
+  "<<" -> PShiftLeft
+  ">>" -> PShiftRight
+  "<" -> PLessThan
+  ">" -> PGreaterThan
+  "<=" -> PLessEqual
+  ">=" -> PGreaterEqual
+  "==" -> PEqual
+  "!=" -> PNotEqual
+  "^" -> PXor
+  "|" -> POr
+  "&&" -> PLogicalAnd
+  "||" -> PLogicalOr
+  "?" -> PQuestionMark
+  ":" -> PColon
+  ";" -> PSemicolon
+  "..." -> PEllipsis
+  "=" -> PAssignment
+  "*=" -> PTimesEquals
+  "/=" -> PDivEquals
+  "%=" -> PModEquals
+  "+=" -> PAddEquals
+  "-=" -> PSubEquals
+  "<<=" -> PLeftShiftEquals
+  ">>=" -> PRightShiftEquals
+  "&=" -> PAndEquals
+  "^=" -> PXorEquals
+  "|=" -> POrEquals
+  "," -> PComma
+  "#" -> PHash
+  "##" -> PDoubleHash
+  _ -> error "unknown symbol"

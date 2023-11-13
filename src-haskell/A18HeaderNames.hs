@@ -1,5 +1,6 @@
 module A18HeaderNames where
 
+import GrammarTypes (Token (TokenBracketedHeaderName, TokenQuotedHeaderName))
 import Parsing
 
 --- A.1.8 Header Names
@@ -8,12 +9,12 @@ headerNameC =
   paltv
     [ do
         pchar '<'
-        chars <- hCharSequenceC
+        chars <- TokenBracketedHeaderName <$> hCharSequenceC
         pchar '>'
         pure chars,
       do
         pchar '"'
-        chars <- qCharSequenceC
+        chars <- TokenQuotedHeaderName <$> qCharSequenceC
         pchar '"'
         pure chars
     ]

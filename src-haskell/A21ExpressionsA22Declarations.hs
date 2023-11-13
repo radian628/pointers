@@ -1,3 +1,5 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module A21ExpressionsA22Declarations where
 
 import A13A14A15
@@ -8,33 +10,34 @@ import GrammarTypes
 import GrammarUtils
 import Parsing
 import Tokenizer
+import TokenizerHelpers
 
 --- A.2.1 Expressions
 
-primaryExpressionC :: Parser (CSTNode PrimaryExpressionC)
+primaryExpressionC :: TokenParser (CSTNode PrimaryExpressionC)
 primaryExpressionC =
   getnode $
     paltv
-      [ PrimaryExpressionIdentifierC <$> identifierC,
-        PrimaryExpressionConstantC <$> constantC,
-        PrimaryExpressionStringLiteralC <$> stringLiteralC,
+      [ PrimaryExpressionIdentifierC <$> identifierT,
+        PrimaryExpressionConstantC <$> constantT,
+        PrimaryExpressionStringLiteralC <$> getnode stringLiteralT,
         PrimaryExpressionExpressionC
           <$> ( do
-                  pchar '('
+                  punctuatorT PParenOpen
                   expr <- expressionC
-                  pchar ')'
+                  punctuatorT PParenClosed
                   pure expr
               ),
         PrimaryExpressionGenericSelectionC <$> genericSelectionC
       ]
 
 genericSelectionC = getnode $ do
-  pstr "_Generic"
-  pchar '('
+  kw KeywordGeneric
+  $(punct "(")
   ass <- assignmentExpressionC
-  pchar ','
+  $(punct ",")
   gen <- genericAssocListC
-  pchar ')'
+  $(punct ")")
   pure $
     GenericSelectionC
       ass
@@ -46,7 +49,7 @@ genericAssocListC =
       <$> poneormoreDifferent
         genericAssociationC
         ( do
-            pchar ','
+            $(punct ",")
             genericAssociationC
         )
 
@@ -55,16 +58,16 @@ genericAssociationC =
     paltv
       [ do
           typename <- typeNameC
-          pchar ':'
+          punctuatorT PColon
           ass <- assignmentExpressionC
           pure $ GenericAssociationTypeNameC typename ass,
         do
-          pstr "default"
-          pchar ':'
+          kw KeywordDefault
+          $(punct ":")
           GenericAssociationDefaultC <$> assignmentExpressionC
       ]
 
-postfixExpressionC :: Parser (CSTNode PostfixExpressionC)
+postfixExpressionC :: TokenParser (CSTNode PostfixExpressionC)
 postfixExpressionC =
   getnode $
     paltv
@@ -73,14 +76,14 @@ postfixExpressionC =
           postfixes <- pkleene postfixExpressionInnerCD
           pure $ PostfixExpressionC expr postfixes,
         do
-          pchar '('
+          $(punct "(")
           tn <- typeNameC
-          pchar ')'
-          pchar '{'
+          $(punct ")")
+          $(punct "{")
           inl <- initializerListC
-          pchar '}'
+          $(punct "}")
           postfixes <- pkleene postfixExpressionInnerCD
-          popt $ pchar ','
+          popt $ $(punct ",")
           pure $
             PostfixExpressionInnerInitializerListCD
               tn
@@ -88,45 +91,45 @@ postfixExpressionC =
               postfixes
       ]
 
-postfixExpressionInnerCD :: Parser (CSTNode PostfixExpressionInnerCD)
+postfixExpressionInnerCD :: TokenParser (CSTNode PostfixExpressionInnerCD)
 postfixExpressionInnerCD =
   getnode $
     paltv
       [ do
-          pchar '['
+          $(punct "[")
           expr <- expressionC
-          pchar ']'
+          $(punct "]")
           pure $
             PostfixExpressionInnerArraySubscriptCD
               expr,
         do
-          pchar '('
+          $(punct "(")
           arglist <- argumentExpressionListC
-          pchar ')'
+          $(punct ")")
           pure $
             PostfixExpressionInnerFunctionCallCD
               arglist,
         do
-          pchar '.'
+          $(punct ".")
           PostfixExpressionInnerDotCD
-            <$> identifierC,
+            <$> identifierT,
         do
-          pstr "->"
+          $(punct "->")
           PostfixExpressionInnerArrowCD
-            <$> identifierC,
+            <$> identifierT,
         do
           op <-
             getnode $
               paltv
-                [ PostfixExpressionUnaryOpIncrementCD <$ pstr "++",
-                  PostfixExpressionUnaryOpDecrementCD <$ pstr "--"
+                [ PostfixExpressionUnaryOpIncrementCD <$ $(punct "++"),
+                  PostfixExpressionUnaryOpDecrementCD <$ $(punct "--")
                 ]
           pure $ PostfixExpressionInnerUnaryOpCD op
       ]
 
 argumentExpressionListC = getnode $ do
   initArgExpr <- assignmentExpressionC
-  argExprs <- pkleene (fmap snd $ pconcat (pchar ',') $ assignmentExpressionC)
+  argExprs <- pkleene (fmap snd $ pconcat $(punct ",") $ assignmentExpressionC)
   pure (ArgumentExpressionListC (initArgExpr : argExprs))
 
 unaryExpressionC =
@@ -138,20 +141,20 @@ unaryExpressionC =
           expr <- castExpressionC
           pure $ UnaryExpressionGeneralC op expr,
         do
-          pstr "sizeof"
+          kw KeywordSizeof
           paltv
             [ UnaryExpressionSizeofC <$> unaryExpressionC,
               do
-                pchar '('
+                $(punct "(")
                 tn <- typeNameC
-                pchar ')'
+                $(punct ")")
                 pure (UnaryExpressionSizeofTypeC tn)
             ],
         do
-          pstr "_Alignof"
-          pchar '('
+          kw KeywordSizeof
+          $(punct "(")
           tn <- typeNameC
-          pchar ')'
+          $(punct ")")
           pure (UnaryExpressionAlignofC tn)
       ]
 
@@ -160,54 +163,53 @@ unaryExpressionC =
 unaryOperatorC =
   getnode $
     paltv
-      [ UnaryOpPrefixInc <$ pstr "++",
-        UnaryOpPrefixDec <$ pstr "--",
-        UnaryOpAddressOf <$ pstr "&",
-        UnaryOpDereference <$ pstr "*",
-        UnaryOpPlus <$ pstr "+",
-        UnaryOpMinus <$ pstr "-",
-        UnaryOpBitwiseNot <$ pstr "~",
-        UnaryOpLogicalNot <$ pstr "!"
+      [ UnaryOpPrefixInc <$ $(punct "++"),
+        UnaryOpPrefixDec <$ $(punct "--"),
+        UnaryOpAddressOf <$ $(punct "&"),
+        UnaryOpDereference <$ $(punct "*"),
+        UnaryOpPlus <$ $(punct "+"),
+        UnaryOpMinus <$ $(punct "-"),
+        UnaryOpBitwiseNot <$ $(punct "~"),
+        UnaryOpLogicalNot <$ $(punct "!")
       ]
 
 castExpressionC =
-  doskip $
-    getnode $
-      paltv
-        [ CastExpressionUnaryExpressionC <$> unaryExpressionC,
-          do
-            pchar '('
-            tn <- typeNameC
-            pchar ')'
-            cast <- castExpressionC
-            pure $ CastExpressionCastC tn cast
-        ]
+  getnode $
+    paltv
+      [ CastExpressionUnaryExpressionC <$> unaryExpressionC,
+        do
+          $(punct "(")
+          tn <- typeNameC
+          $(punct ")")
+          cast <- castExpressionC
+          pure $ CastExpressionCastC tn cast
+      ]
 
 binaryOpHelper ::
-  [([Char], BinaryOp)] ->
-  Parser (CSTNode BinaryOpExpressionCD) ->
-  Parser (CSTNode BinaryOpExpressionCD)
+  [TokenParser BinaryOp] ->
+  TokenParser (CSTNode BinaryOpExpressionCD) ->
+  TokenParser (CSTNode BinaryOpExpressionCD)
 binaryOpHelper operators nextParser =
-  doskip $ getnode $ do
+  getnode $ do
     left <- nextParser
     rights <- pkleene $ do
       op <-
         getnode $
-          paltv (map (\(str, op) -> op <$ pstr str) operators)
+          paltv operators
       right <- nextParser
       pure (op, right)
     pure $
       BinaryOpExpressionCD
         -- get rid of redundant nested binary op expressions
         ( case left of
-            CSTExpression d pp pp' ss se ->
+            CSTExpression d pp pp' ->
               case d of
                 BinaryOpExpressionCastCD _ -> left
                 BinaryOpExpressionCD left' rights' ->
                   if null rights'
                     then -- remember to merge the skip tokens of
                     -- outer and inner exprs!
-                      mergeskip left left'
+                      left'
                     else left
             CSTError {} -> left
         )
@@ -215,81 +217,94 @@ binaryOpHelper operators nextParser =
 
 multiplicativeExpressionC =
   binaryOpHelper
-    [ ("*", BinaryOpMul),
-      ("/", BinaryOpDiv),
-      ("%", BinaryOpRemainder)
+    [ BinaryOpMul <$ $(punct "*"),
+      BinaryOpDiv <$ $(punct "/"),
+      BinaryOpRemainder <$ $(punct "%")
     ]
     $ (getnode $ BinaryOpExpressionCastCD <$> castExpressionC)
 
 additiveExpressionC =
   binaryOpHelper
-    [ ("+", BinaryOpAdd),
-      ("-", BinaryOpSub)
+    [ BinaryOpAdd <$ $(punct "+"),
+      BinaryOpSub <$ $(punct "-")
     ]
     multiplicativeExpressionC
 
 shiftExpressionC =
   binaryOpHelper
-    [ ("<<", BinaryOpBitshiftLeft),
-      (">>", BinaryOpBitshiftRight)
+    [ BinaryOpBitshiftLeft <$ $(punct "<<"),
+      BinaryOpBitshiftRight <$ $(punct ">>")
     ]
     additiveExpressionC
 
 relationalExpressionC =
   binaryOpHelper
-    [ ("<", BinaryOpLessThan),
-      (">", BinaryOpGreaterThan),
-      ("<=", BinaryOpLesserEq),
-      (">=", BinaryOpGreaterEq)
+    [ BinaryOpLessThan <$ $(punct "<"),
+      BinaryOpGreaterThan <$ $(punct ">"),
+      BinaryOpLesserEq <$ $(punct "<="),
+      BinaryOpGreaterEq <$ $(punct ">=")
     ]
     shiftExpressionC
 
 equalityExpressionC =
   binaryOpHelper
-    [ ("==", BinaryOpEqualTo),
-      ("!=", BinaryOpNotEqualTo)
+    [ BinaryOpEqualTo <$ $(punct "=="),
+      BinaryOpNotEqualTo <$ $(punct "!=")
     ]
     relationalExpressionC
 
 andExpressionC =
-  binaryOpHelper [("&", BinaryOpBitwiseAnd)] equalityExpressionC
+  binaryOpHelper
+    [ BinaryOpBitwiseAnd <$ $(punct "&")
+    ]
+    equalityExpressionC
 
 exclusiveOrExpressionC =
-  binaryOpHelper [("^", BinaryOpBitwiseXor)] andExpressionC
+  binaryOpHelper
+    [ BinaryOpBitwiseXor <$ $(punct "^")
+    ]
+    andExpressionC
 
 inclusiveOrExpressionC =
-  binaryOpHelper [("|", BinaryOpBitwiseOr)] exclusiveOrExpressionC
+  binaryOpHelper
+    [ BinaryOpBitwiseOr <$ $(punct "|")
+    ]
+    exclusiveOrExpressionC
 
 logicalAndExpressionC =
-  binaryOpHelper [("&&", BinaryOpLogicalAnd)] inclusiveOrExpressionC
+  binaryOpHelper
+    [ BinaryOpLogicalAnd <$ $(punct "&&")
+    ]
+    inclusiveOrExpressionC
 
 logicalOrExpressionC =
-  binaryOpHelper [("||", BinaryOpLogicalOr)] logicalAndExpressionC
+  binaryOpHelper
+    [ BinaryOpLogicalOr <$ $(punct "||")
+    ]
+    logicalAndExpressionC
 
 conditionalExpressionC =
   getnode $
     paltv
-      [ ConditionalExpressionBinaryOpC <$> logicalOrExpressionC,
-        do
+      [ do
           cond <- logicalOrExpressionC
-          pchar '?'
+          $(punct "?")
           iftrue <- expressionC
-          pchar ':'
+          $(punct ":")
           iffalse <- conditionalExpressionC
           pure $
             ConditionalExpressionTernaryC
               cond
               iftrue
-              iffalse
+              iffalse,
+        ConditionalExpressionBinaryOpC <$> logicalOrExpressionC
       ]
 
-assignmentExpressionC :: Parser (CSTNode AssignmentExpressionC)
+assignmentExpressionC :: TokenParser (CSTNode AssignmentExpressionC)
 assignmentExpressionC =
   getnode $
     paltv
-      [ AssignmentExpressionConditionalExpressionC
-          <$> conditionalExpressionC,
-        do
+      [ do
           u <- unaryExpressionC
           ao <- assignmentOperatorC
           ae <- assignmentExpressionC
@@ -297,7 +312,9 @@ assignmentExpressionC =
             AssignmentExpressionBinaryOpExpressionC
               u
               ao
-              ae
+              ae,
+        AssignmentExpressionConditionalExpressionC
+          <$> conditionalExpressionC
       ]
 
 assignmentOperatorC =
@@ -305,17 +322,17 @@ assignmentOperatorC =
     paltv $
       fmap
         (\(parser, v) -> v <$ parser)
-        [ (pstr "=", AssignmentOperatorEqualsC),
-          (pstr "*=", AssignmentOperatorMulC),
-          (pstr "/=", AssignmentOperatorDivC),
-          (pstr "%=", AssignmentOperatorModC),
-          (pstr "+=", AssignmentOperatorAddC),
-          (pstr "-=", AssignmentOperatorSubC),
-          (pstr "<<=", AssignmentOperatorLeftShiftC),
-          (pstr ">>=", AssignmentOperatorRightShiftC),
-          (pstr "&=", AssignmentOperatorBitwiseAndC),
-          (pstr "^=", AssignmentOperatorBitwiseXorC),
-          (pstr "|=", AssignmentOperatorBitwiseOrC)
+        [ ($(punct "="), AssignmentOperatorEqualsC),
+          ($(punct "*="), AssignmentOperatorMulC),
+          ($(punct "/="), AssignmentOperatorDivC),
+          ($(punct "%="), AssignmentOperatorModC),
+          ($(punct "+="), AssignmentOperatorAddC),
+          ($(punct "-="), AssignmentOperatorSubC),
+          ($(punct "<<="), AssignmentOperatorLeftShiftC),
+          ($(punct ">>="), AssignmentOperatorRightShiftC),
+          ($(punct "&="), AssignmentOperatorBitwiseAndC),
+          ($(punct "^="), AssignmentOperatorBitwiseXorC),
+          ($(punct "|="), AssignmentOperatorBitwiseOrC)
         ]
 
 expressionC =
@@ -324,7 +341,7 @@ expressionC =
       <$> poneormoreDifferent
         assignmentExpressionC
         ( do
-            pchar ','
+            $(punct ",")
             assignmentExpressionC
         )
 
@@ -332,7 +349,16 @@ constantExpressionC = conditionalExpressionC
 
 -- A.2.2 Declarations
 
--- declarationC
+declarationC =
+  getnode $
+    paltv
+      [ do
+          declspec <- declarationSpecifiersC
+          declist <- popt initDeclaratorListC
+          $(punct ";")
+          pure $ DeclarationC declspec declist,
+        DeclarationStaticAssertC <$> staticAssertDeclarationC
+      ]
 
 declarationSpecifiersC =
   getnode $
@@ -348,40 +374,59 @@ declarationSpecifierCD =
         DeclarationSpecifierAlignmentSpecifierCD <$> alignmentSpecifierC
       ]
 
--- initDeclaratorListC
+initDeclaratorListC =
+  getnode $
+    ( InitDeclaratorListC
+        <$> poneormoreDifferent
+          initDeclaratorC
+          ( do
+              $(punct ",")
+              dec <- initDeclaratorC
+              pure $ dec
+          )
+    )
 
--- initDeclaratorC
+initDeclaratorC =
+  getnode $
+    paltv
+      [ InitDeclaratorDeclaratorC <$> declaratorC,
+        do
+          dec <- declaratorC
+          $(punct "=")
+          init <- initializerC
+          pure $ InitDeclaratorAssignmentC dec init
+      ]
 
 storageClassSpecifierC =
   getnode $
     paltv $
       map
-        (\(str, spec) -> fmap (const spec) (pstr str))
-        [ ("typedef", StorageClassSpecifierTypeDefC),
-          ("extern", StorageClassSpecifierExternC),
-          ("static", StorageClassSpecifierStaticC),
-          ("_Thread_local", StorageClassSpecifierThreadLocalC),
-          ("auto", StorageClassSpecifierAutoC),
-          ("register", StorageClassSpecifierRegisterC)
+        (\(str, spec) -> fmap (const spec) (kw str))
+        [ (KeywordTypedef, StorageClassSpecifierTypeDefC),
+          (KeywordExtern, StorageClassSpecifierExternC),
+          (KeywordStatic, StorageClassSpecifierStaticC),
+          (KeywordThreadLocal, StorageClassSpecifierThreadLocalC),
+          (KeywordAuto, StorageClassSpecifierAutoC),
+          (KeywordRegister, StorageClassSpecifierRegisterC)
         ]
 
 typeSpecifierC =
   getnode $
     paltv
       ( map
-          ( \(str, spec) -> fmap (const spec) (pstr str)
+          ( \(str, spec) -> fmap (const spec) (kw str)
           )
-          [ ("void", TypeSpecifierVoidC),
-            ("char", TypeSpecifierCharC),
-            ("short", TypeSpecifierShortC),
-            ("int", TypeSpecifierIntC),
-            ("long", TypeSpecifierLongC),
-            ("float", TypeSpecifierFloatC),
-            ("double", TypeSpecifierDoubleC),
-            ("signed", TypeSpecifierSignedC),
-            ("unsigned", TypeSpecifierUnsignedC),
-            ("_Bool", TypeSpecifierBoolC),
-            ("_Complex", TypeSpecifierComplexC)
+          [ (KeywordVoid, TypeSpecifierVoidC),
+            (KeywordChar, TypeSpecifierCharC),
+            (KeywordShort, TypeSpecifierShortC),
+            (KeywordInt, TypeSpecifierIntC),
+            (KeywordLong, TypeSpecifierLongC),
+            (KeywordFloat, TypeSpecifierFloatC),
+            (KeywordDouble, TypeSpecifierDoubleC),
+            (KeywordSigned, TypeSpecifierSignedC),
+            (KeywordUnsigned, TypeSpecifierUnsignedC),
+            (KeywordBool, TypeSpecifierBoolC),
+            (KeywordComplex, TypeSpecifierComplexC)
           ]
           ++ [ TypeSpecifierAtomicC <$> atomicTypeSpecifierC,
                TypeSpecifierStructOrUnionC <$> structOrUnionSpecifierC,
@@ -395,10 +440,10 @@ structOrUnionSpecifierC =
     paltv
       [ do
           sou <- structOrUnionC
-          name <- popt identifierC
-          pchar '{'
+          name <- popt $ identifierT
+          $(punct "{")
           fields <- structDeclarationListC
-          pchar '}'
+          $(punct "}")
           pure $
             StructOrUnionSpecifierWithDecListC
               sou
@@ -406,7 +451,7 @@ structOrUnionSpecifierC =
               fields,
         do
           sou <- structOrUnionC
-          name <- identifierC
+          name <- identifierT
           pure $
             StructOrUnionSpecifierC
               sou
@@ -416,8 +461,8 @@ structOrUnionSpecifierC =
 structOrUnionC =
   getnode $
     paltv
-      [ StructOrUnionStructC <$ pstr "struct",
-        StructOrUnionUnionC <$ pstr "union"
+      [ StructOrUnionStructC <$ kw KeywordStruct,
+        StructOrUnionUnionC <$ kw KeywordUnion
       ]
 
 structDeclarationListC =
@@ -431,7 +476,7 @@ structDeclarationC =
       [ do
           specqual <- specifierQualifierListC
           declarators <- popt structDeclaratorListC
-          pchar ';'
+          $(punct ";")
           pure $
             StructDeclarationC
               specqual
@@ -455,7 +500,7 @@ structDeclaratorListC =
       <$> poneormoreDifferent
         structDeclaratorC
         ( do
-            pchar ','
+            $(punct ",")
             structDeclaratorC
         )
 
@@ -472,15 +517,16 @@ structDeclaratorC =
       ]
 
 enumSpecifierC = getnode $ do
-  pstr "enum"
+  kw KeywordEnum
   paltv
-    [ EnumSpecifierC <$> identifierC,
+    [ EnumSpecifierC <$> identifierT,
       do
-        name <- popt identifierC
-        pchar '{'
+        name <- popt $ identifierT
+        $(punct "{")
         enumlist <- enumeratorListC
-        popt $ pchar ','
-        pchar '}'
+        popt $
+          $(punct ",")
+        $(punct "}")
         pure $ EnumSpecifierWithDataC name enumlist
     ]
 
@@ -489,38 +535,38 @@ enumeratorListC = getnode $ do
     <$> poneormoreDifferent
       enumeratorC
       ( do
-          pchar ','
+          $(punct ",")
           enumeratorC
       )
 
 enumeratorC =
   getnode $
     paltv
-      [ EnumeratorC <$> enumerationConstantC,
+      [ EnumeratorC <$> identifierT,
         do
-          enumconst <- enumerationConstantC
-          pchar '='
+          enumconst <- identifierT
+          $(punct "=")
           expr <- constantExpressionC
           pure $ EnumeratorAssignmentC enumconst expr
       ]
 
-atomicTypeSpecifierC :: Parser (CSTNode AtomicTypeSpecifierC)
+atomicTypeSpecifierC :: TokenParser (CSTNode AtomicTypeSpecifierC)
 atomicTypeSpecifierC = getnode $ do
-  pstr "_Atomic"
-  pchar '('
+  kw KeywordAtomic
+  $(punct "(")
   typename <- typeNameC
-  pchar ')'
+  $(punct ")")
   pure $ AtomicTypeSpecifierC typename
 
 typeQualifierC =
   getnode $
     paltv
       ( map
-          (\(str, spec) -> fmap (const spec) (pstr str))
-          [ ("const", TypeQualifierConstC),
-            ("restrict", TypeQualifierRestrictC),
-            ("volatile", TypeQualifierVolatileC),
-            ("_Atomic", TypeQualifierAtomicC)
+          (\(str, spec) -> fmap (const spec) (kw str))
+          [ (KeywordConst, TypeQualifierConstC),
+            (KeywordRestrict, TypeQualifierRestrictC),
+            (KeywordVolatile, TypeQualifierVolatileC),
+            (KeywordAtomic, TypeQualifierAtomicC)
           ]
       )
 
@@ -528,22 +574,22 @@ functionSpecifierC =
   getnode $
     paltv
       ( map
-          (\(str, spec) -> fmap (const spec) (pstr str))
-          [ ("inline", FunctionSpecifierInlineC),
-            ("_Noreturn", FunctionSpecifierNoReturnC)
+          (\(str, spec) -> fmap (const spec) (kw str))
+          [ (KeywordInline, FunctionSpecifierInlineC),
+            (KeywordNoreturn, FunctionSpecifierNoReturnC)
           ]
       )
 
-alignmentSpecifierC :: Parser (CSTNode AlignmentSpecifierC)
+alignmentSpecifierC :: TokenParser (CSTNode AlignmentSpecifierC)
 alignmentSpecifierC = getnode $ do
-  pstr "_Alignas"
-  pchar '('
+  kw KeywordAlignAs
+  $(punct "(")
   ret <-
     paltv
       [ AlignmentSpecifierC <$> (Left <$> typeNameC),
         AlignmentSpecifierC <$> Right <$> constantExpressionC
       ]
-  pchar ')'
+  $(punct ")")
   pure ret
 
 declaratorC = getnode $ do
@@ -554,11 +600,11 @@ declaratorC = getnode $ do
 directDeclaratorC = getnode $ do
   dec <-
     paltv
-      [ Left <$> identifierC,
+      [ Left <$> identifierT,
         do
-          pchar '('
+          $(punct "(")
           dec <- Right <$> declaratorC
-          pchar ')'
+          $(punct ")")
           pure dec
       ]
   suffixes <- pkleene directDeclaratorSuffixCD
@@ -568,7 +614,7 @@ directDeclaratorSuffixCD =
   getnode $
     paltv
       [ do
-          pchar '['
+          $(punct "[")
           arr <-
             paltv
               [ do
@@ -579,7 +625,7 @@ directDeclaratorSuffixCD =
                       tql
                       ass,
                 do
-                  pstr "static"
+                  kw KeywordStatic
                   tql <- popt typeQualifierListC
                   ass <- assignmentExpressionC
                   pure $
@@ -588,7 +634,7 @@ directDeclaratorSuffixCD =
                       ass,
                 do
                   tql <- typeQualifierListC
-                  pstr "static"
+                  kw KeywordStatic
                   ass <- assignmentExpressionC
                   pure $
                     DirectDeclaratorSuffixStaticArrayC
@@ -596,24 +642,24 @@ directDeclaratorSuffixCD =
                       ass,
                 do
                   tql <- popt typeQualifierListC
-                  pchar '*'
+                  $(punct "*")
                   pure $
                     DirectDeclaratorSuffixPointerArrayC
                       tql
               ]
-          pchar ']'
+          $(punct "]")
           pure arr,
         do
-          pchar '('
+          $(punct "(")
           ptl <- parameterTypeListC
-          pchar ')'
+          $(punct ")")
           pure $
             DirectDeclaratorSuffixParamTypeListC
               ptl,
         do
-          pchar '('
+          $(punct "(")
           idl <- popt identifierListC
-          pchar ')'
+          $(punct ")")
           pure $
             DirectDeclaratorSuffixIdentifierListC
               idl
@@ -622,8 +668,8 @@ directDeclaratorSuffixCD =
 pointerC =
   getnode $
     PointerC
-      <$> ( pkleene $ do
-              pchar '*'
+      <$> ( poneormore $ do
+              $(punct "*")
               pointerElementCD
           )
 
@@ -636,19 +682,19 @@ parameterTypeListC = getnode $ do
   variadic <-
     popt
       ( do
-          pchar ','
-          pstr "..."
+          $(punct ",")
+          $(punct "...")
       )
   pure $ ParameterTypeListC plist (isJust variadic)
 
-parameterListC :: Parser (CSTNode ParameterListC)
+parameterListC :: TokenParser (CSTNode ParameterListC)
 parameterListC =
   getnode $
     ParameterListC
       <$> poneormoreDifferent
         parameterDeclarationC
         ( do
-            pchar ','
+            $(punct ",")
             parameterDeclarationC
         )
 
@@ -665,13 +711,13 @@ identifierListC =
   getnode $
     IdentifierListC
       <$> poneormoreDifferent
-        identifierC
+        (identifierT)
         ( do
-            pchar ','
-            identifierC
+            $(punct ",")
+            identifierT
         )
 
-typeNameC :: Parser (CSTNode TypeNameC)
+typeNameC :: TokenParser (CSTNode TypeNameC)
 typeNameC = getnode $ do
   specQualList <- specifierQualifierListC
   absdec <- popt abstractDeclaratorC
@@ -694,9 +740,9 @@ directAbstractDeclaratorC = getnode $ do
   ad <-
     popt
       ( do
-          pchar '('
+          $(punct "(")
           ad <- abstractDeclaratorC
-          pchar ')'
+          $(punct ")")
           pure ad
       )
   elems <- pkleene directAbstractDeclaratorElementCD
@@ -706,50 +752,50 @@ directAbstractDeclaratorElementCD =
   getnode $
     paltv
       [ do
-          pchar '['
+          $(punct "[")
           tql <- popt typeQualifierListC
           ass <- popt assignmentExpressionC
-          pchar ']'
+          $(punct "]")
           pure $ DirectAbstractDeclaratorElementArray tql ass,
         do
-          pchar '['
-          pstr "static"
+          $(punct "[")
+          kw KeywordStatic
           tql <- popt typeQualifierListC
           ass <- assignmentExpressionC
-          pchar ']'
+          $(punct "]")
           pure $ DirectAbstractDeclaratorStaticArray tql ass,
         do
-          pchar '['
+          $(punct "[")
           tql <- typeQualifierListC
-          pstr "static"
+          kw KeywordStatic
           ass <- assignmentExpressionC
-          pchar ']'
+          $(punct "]")
           pure $
             DirectAbstractDeclaratorStaticArray (Just tql) ass,
         do
-          pchar '['
-          pchar '*'
-          pchar ']'
+          $(punct "[")
+          $(punct "*")
+          $(punct "]")
           pure DirectAbstractDeclaratorStarArray,
         do
-          pchar '('
+          $(punct "(")
           ptl <- popt parameterTypeListC
-          pchar ')'
+          $(punct ")")
           pure $
             DirectAbstractDeclaratorParameterList
               ptl
       ]
 
-typedefNameC = identifierC
+typedefNameC = identifierT
 
 initializerC =
   paltv
     [ getnode $ InitializerAssignmentC <$> assignmentExpressionC,
       getnode $ do
-        pchar '{'
+        $(punct "{")
         init <- initializerListC
-        popt $ pchar ','
-        pchar '}'
+        popt $ $(punct ",")
+        $(punct "}")
         pure (InitializerInitializerListC init)
     ]
 
@@ -763,7 +809,7 @@ initializerListC =
             pure (desg, init)
         )
         ( do
-            pchar ','
+            $(punct ",")
             desg <- popt designationC
             init <- initializerC
             pure (desg, init)
@@ -771,7 +817,7 @@ initializerListC =
 
 designationC = getnode $ do
   dl <- DesignationC <$> designatorListC
-  pchar '='
+  $(punct "=")
   pure dl
 
 designatorListC =
@@ -781,23 +827,23 @@ designatorListC =
 designatorC =
   paltv
     [ getnode $ do
-        pchar '['
+        $(punct "[")
         expr <-
           DesignatorArrayC
             <$> (constantExpressionC)
-        pchar ']'
+        $(punct "]")
         pure expr,
       getnode $ do
-        pchar '.'
-        DesignatorDotC <$> identifierC
+        $(punct ".")
+        DesignatorDotC <$> identifierT
     ]
 
 staticAssertDeclarationC = getnode $ do
-  pstr "_Static_assert"
-  pchar '('
+  kw KeywordStaticAssert
+  $(punct "(")
   expr <- constantExpressionC
-  pchar ','
-  str <- stringLiteralC
-  pchar ')'
-  pchar ';'
+  $(punct ",")
+  str <- getnode $ stringLiteralT
+  $(punct ")")
+  $(punct ";")
   pure $ StaticAssertDeclarationC expr str
