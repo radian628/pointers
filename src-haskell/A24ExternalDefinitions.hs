@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module A24ExternalDefinitions where
 
 import A21ExpressionsA22Declarations (declarationC, declarationSpecifiersC, declaratorC)
@@ -21,26 +23,23 @@ externalDeclarationC =
 declSpecWithoutEndCD =
   getnode $
     useInnerNode $
-      ( \expr ->
-          case expr of
-            CSTExpression v _ _ ->
-              let (DeclarationSpecifiersC declspecs) = v
-               in ( let noEnd = nonEmpty . init . toList $ declspecs
-                     in case noEnd of
-                          Just l ->
-                            CSTExpression
-                              ( DeclarationSpecifiersC
-                                  l
-                              )
-                              (nodeStart expr)
-                              (nodeEnd (head (toList l)))
-                          Nothing ->
-                            CSTError
-                              "function call needs declspecs!"
-                              (nodeStart expr)
-                              (nodeEnd expr)
-                  )
-            CSTError {} -> expr
+      ( \case
+          expr@(CSTExpression (DeclarationSpecifiersC declspecs) _ _) ->
+            ( case nonEmpty . init . toList $ declspecs of
+                Just l ->
+                  CSTExpression
+                    ( DeclarationSpecifiersC
+                        l
+                    )
+                    (nodeStart expr)
+                    (nodeEnd (head (toList l)))
+                Nothing ->
+                  CSTError
+                    "function call needs declspecs!"
+                    (nodeStart expr)
+                    (nodeEnd expr)
+            )
+          expr@CSTError {} -> expr
       )
         <$> declarationSpecifiersC
 
